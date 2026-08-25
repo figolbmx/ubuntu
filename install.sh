@@ -25,6 +25,12 @@
 #
 # ============================================================
 
+# ── Auto-fix Windows line endings (CRLF → LF) ───────────────
+if file "$0" 2>/dev/null | grep -q CRLF || cat "$0" | grep -qP '\r'; then
+  sed -i 's/\r//' "$0"
+  exec bash "$0" "$@"
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'

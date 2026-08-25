@@ -315,6 +315,207 @@ install_opencode() {
   fi
 }
 
+install_cockpit_tools() {
+  section "Install Cockpit Tools (AI IDE Account Manager)"
+  info "Cockpit Tools — Universal AI IDE account manager"
+  info "Support: Kiro, Cursor, GitHub Copilot, Windsurf, Codex, Grok CLI, dll"
+  echo ""
+
+  apt-get install -y curl wget jq
+
+  info "Mengambil versi terbaru dari GitHub Releases..."
+  LATEST=$(curl -fsSL "https://api.github.com/repos/jlcodes99/cockpit-tools/releases/latest" \
+    | grep -oP '"tag_name":\s*"\K[^"]+' | head -1)
+
+  if [[ -z "$LATEST" ]]; then
+    warn "Gagal mengambil versi terbaru. Menggunakan versi fallback..."
+    LATEST="latest"
+  fi
+
+  info "Versi: $LATEST"
+
+  # Deteksi arsitektur
+  ARCH=$(dpkg --print-architecture)
+  if [[ "$ARCH" == "amd64" ]]; then
+    DEB_PATTERN="amd64.deb"
+  elif [[ "$ARCH" == "arm64" ]]; then
+    DEB_PATTERN="arm64.deb"
+  else
+    DEB_PATTERN=".deb"
+  fi
+
+  # Ambil URL .deb dari release terbaru
+  DEB_URL=$(curl -fsSL "https://api.github.com/repos/jlcodes99/cockpit-tools/releases/latest" \
+    | grep -oP '"browser_download_url":\s*"\K[^"]+' \
+    | grep "$DEB_PATTERN" | head -1)
+
+  if [[ -z "$DEB_URL" ]]; then
+    err "Tidak bisa menemukan file .deb untuk arsitektur: $ARCH"
+    echo ""
+    echo -e "  Download manual dari: ${CYAN}https://github.com/jlcodes99/cockpit-tools/releases${NC}"
+    return
+  fi
+
+  info "Download dari: $DEB_URL"
+  COCKPIT_DEB="/tmp/cockpit-tools.deb"
+  wget -q --show-progress -O "$COCKPIT_DEB" "$DEB_URL"
+
+  if [[ -f "$COCKPIT_DEB" ]]; then
+    info "Menginstall Cockpit Tools..."
+    apt-get install -y "$COCKPIT_DEB" 2>/dev/null || {
+      dpkg -i "$COCKPIT_DEB"
+      apt-get install -f -y
+    }
+    rm -f "$COCKPIT_DEB"
+
+    if command -v cockpit-tools &>/dev/null || \
+       ls /opt/Cockpit\ Tools* &>/dev/null 2>/dev/null || \
+       ls /usr/share/cockpit-tools* &>/dev/null 2>/dev/null; then
+      log "Cockpit Tools berhasil diinstall."
+    else
+      warn "Cockpit Tools mungkin terinstall. Cari di Application Menu atau:"
+      info "find /opt /usr/share -iname '*cockpit*' 2>/dev/null"
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Fitur Cockpit Tools:${NC}"
+    echo -e "  - Manage akun Kiro, Cursor, Copilot, Windsurf, Codex, Grok CLI"
+    echo -e "  - One-click switch antar akun AI IDE"
+    echo -e "  - Monitor quota & reset time"
+    echo -e "  - Multi-instance parallel workflow"
+    echo ""
+    echo -e "  ${YELLOW}Jalankan via Application Menu atau:${NC}"
+    echo -e "  ${CYAN}cockpit-tools${NC}  atau cari 'Cockpit Tools' di desktop"
+    echo ""
+  else
+    err "Gagal mendownload Cockpit Tools."
+    echo -e "  Download manual: ${CYAN}https://github.com/jlcodes99/cockpit-tools/releases${NC}"
+  fi
+}
+
+install_github() {
+  section "Install Keperluan GitHub"
+
+  # ── 1. Git ────────────────────────────────────────────────
+  info "Menginstall Git..."
+  apt-get install -y git
+  if command -v git &>/dev/null; then
+    log "Git berhasil diinstall: $(git --version)"
+  else
+    err "Git gagal diinstall."
+    return
+  fi
+
+  # ── 2. GitHub CLI (gh) ────────────────────────────────────
+  info "Menginstall GitHub CLI (gh)..."
+  apt-get install -y curl gpg
+
+  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+  chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
+https://cli.github.com/packages stable main" \
+    > /etc/apt/sources.list.d/github-cli.list
+
+  apt-get update -y
+  apt-get install -y gh
+
+  if command -v gh &>/dev/null; then
+    log "GitHub CLI berhasil diinstall: $(gh --version | head -1)"
+  else
+    err "GitHub CLI gagal diinstall."
+  fi
+
+  # ── 3. Konfigurasi Git global ─────────────────────────────
+  echo ""
+  echo -e "  ${BOLD}Konfigurasi Git Global${NC}"
+  echo -e "  ${YELLOW}(Kosongkan dan tekan Enter untuk skip)${NC}"
+  echo ""
+
+  read -rp "  Nama lengkap (git config user.name): " GIT_NAME
+  read -rp "  Email GitHub (git config user.email): " GIT_EMAIL
+
+  TARGET_USER="${SUDO_USER:-root}"
+  TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6 || echo "/root")
+
+  if [[ -n "$GIT_NAME" ]]; then
+    sudo -u "$TARGET_USER" git config --global user.name "$GIT_NAME"
+    log "Git user.name diset: $GIT_NAME"
+  fi
+  if [[ -n "$GIT_EMAIL" ]]; then
+    sudo -u "$TARGET_USER" git config --global user.email "$GIT_EMAIL"
+    log "Git user.email diset: $GIT_EMAIL"
+  fi
+
+  # Set default branch ke main
+  sudo -u "$TARGET_USER" git config --global init.defaultBranch main
+  # Simpan credential supaya tidak perlu login tiap push
+  sudo -u "$TARGET_USER" git config --global credential.helper store
+  log "Default branch diset ke: main"
+  log "Credential helper diset ke: store"
+
+  # ── 4. SSH Key untuk GitHub ───────────────────────────────
+  echo ""
+  read -rp "  Generate SSH key baru untuk GitHub? (y/N): " GEN_SSH
+  if [[ "$GEN_SSH" == "y" || "$GEN_SSH" == "Y" ]]; then
+    SSH_DIR="$TARGET_HOME/.ssh"
+    mkdir -p "$SSH_DIR"
+    chmod 700 "$SSH_DIR"
+
+    SSH_EMAIL="${GIT_EMAIL:-github@localhost}"
+    SSH_KEY="$SSH_DIR/id_ed25519_github"
+
+    sudo -u "$TARGET_USER" ssh-keygen -t ed25519 -C "$SSH_EMAIL" -f "$SSH_KEY" -N ""
+    chown "$TARGET_USER:$TARGET_USER" "$SSH_KEY" "$SSH_KEY.pub"
+
+    # Tambahkan ke ssh-agent config
+    SSH_CONFIG="$SSH_DIR/config"
+    if ! grep -q "github.com" "$SSH_CONFIG" 2>/dev/null; then
+      cat >> "$SSH_CONFIG" << EOF
+
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile $SSH_KEY
+EOF
+      chown "$TARGET_USER:$TARGET_USER" "$SSH_CONFIG"
+      chmod 600 "$SSH_CONFIG"
+    fi
+
+    log "SSH key dibuat: $SSH_KEY"
+    echo ""
+    echo -e "  ${BOLD}${YELLOW}Tambahkan public key berikut ke GitHub:${NC}"
+    echo -e "  ${CYAN}https://github.com/settings/ssh/new${NC}"
+    echo ""
+    echo -e "  ${BOLD}Public key Anda:${NC}"
+    echo -e "  ${GREEN}$(cat "$SSH_KEY.pub")${NC}"
+    echo ""
+  fi
+
+  # ── 5. Login GitHub CLI ───────────────────────────────────
+  echo ""
+  read -rp "  Login GitHub CLI (gh auth login) sekarang? (y/N): " GH_LOGIN
+  if [[ "$GH_LOGIN" == "y" || "$GH_LOGIN" == "Y" ]]; then
+    sudo -u "$TARGET_USER" gh auth login
+  fi
+
+  # ── Ringkasan ─────────────────────────────────────────────
+  echo ""
+  echo -e "  ${BOLD}Ringkasan GitHub Setup:${NC}"
+  command -v git &>/dev/null && echo -e "  ${GREEN}✔${NC} Git       : $(git --version)"
+  command -v gh  &>/dev/null && echo -e "  ${GREEN}✔${NC} GitHub CLI: $(gh --version | head -1)"
+  echo -e "  ${GREEN}✔${NC} Config    : $(sudo -u "$TARGET_USER" git config --global --list 2>/dev/null | grep -E 'user\.' | tr '\n' ' ')"
+  echo ""
+  echo -e "  ${YELLOW}Perintah berguna:${NC}"
+  echo -e "  gh auth login          — Login ke GitHub"
+  echo -e "  gh repo clone <repo>   — Clone repo"
+  echo -e "  gh repo create         — Buat repo baru"
+  echo -e "  gh pr create           — Buat Pull Request"
+  echo -e "  gh issue list          — Lihat Issues"
+  echo ""
+}
+
 apps_install_all() {
   section "Install Semua Aplikasi"
   warn "Akan menginstall: Chromium, Firefox ESR, Node.js+NPM, VSCode, Kiro, OpenCode"
@@ -327,6 +528,8 @@ apps_install_all() {
   install_vscode
   install_kiro
   install_opencode
+  install_github
+  install_cockpit_tools
 
   section "Ringkasan Instalasi Aplikasi"
   echo ""
@@ -336,8 +539,10 @@ apps_install_all() {
   command -v node &>/dev/null             && echo -e "  ${GREEN}✔${NC} Node.js   : $(node --version)"
   command -v npm &>/dev/null              && echo -e "  ${GREEN}✔${NC} NPM       : $(npm --version)"
   command -v code &>/dev/null             && echo -e "  ${GREEN}✔${NC} VSCode    : $(code --version | head -1)"
-  command -v kiro &>/dev/null             && echo -e "  ${GREEN}✔${NC} Kiro      : $(kiro --version 2>/dev/null || echo 'Terinstall')"
-  command -v opencode &>/dev/null         && echo -e "  ${GREEN}✔${NC} OpenCode  : $(opencode --version 2>/dev/null || echo 'Terinstall')"
+  command -v kiro &>/dev/null               && echo -e "  ${GREEN}✔${NC} Kiro      : $(kiro --version 2>/dev/null || echo 'Terinstall')"
+  command -v opencode &>/dev/null           && echo -e "  ${GREEN}✔${NC} OpenCode  : $(opencode --version 2>/dev/null || echo 'Terinstall')"
+  command -v git &>/dev/null                && echo -e "  ${GREEN}✔${NC} Git       : $(git --version)"
+  command -v gh &>/dev/null                 && echo -e "  ${GREEN}✔${NC} GitHub CLI: $(gh --version | head -1)"
   echo ""
 }
 
@@ -360,6 +565,9 @@ apps_show_status() {
   _chk "VSCode"      "code"             "code --version"
   _chk "Kiro"        "kiro"             "kiro --version"
   _chk "OpenCode"    "opencode"         "opencode --version"
+  _chk "Git"         "git"              "git --version"
+  _chk "GitHub CLI"  "gh"               "gh --version"
+  _chk "Cockpit Tools" "cockpit-tools"  "cockpit-tools --version"
   echo ""
 }
 
@@ -620,11 +828,13 @@ menu_apps() {
     echo -e "  ${GREEN}4)${NC} Visual Studio Code (VSCode)"
     echo -e "  ${GREEN}5)${NC} Kiro (AWS AI IDE)"
     echo -e "  ${GREEN}6)${NC} OpenCode (AI Terminal Agent)"
-    echo -e "  ${YELLOW}7)${NC} Install Semua Aplikasi"
-    echo -e "  ${CYAN}8)${NC} Cek Status Aplikasi"
+    echo -e "  ${GREEN}7)${NC} GitHub (Git + GitHub CLI + SSH Key)"
+    echo -e "  ${GREEN}8)${NC} Cockpit Tools (AI IDE Account Manager)"
+    echo -e "  ${YELLOW}9)${NC} Install Semua Aplikasi"
+    echo -e "  ${CYAN}A)${NC} Cek Status Aplikasi"
     echo -e "  ${RED}0)${NC} Kembali ke Menu Utama"
     echo ""
-    read -rp "  Masukkan pilihan [0-8]: " CHOICE
+    read -rp "  Masukkan pilihan [0-9/A]: " CHOICE
     case "$CHOICE" in
       1) install_chromium ;;
       2) install_firefox_esr ;;
@@ -632,8 +842,10 @@ menu_apps() {
       4) install_vscode ;;
       5) install_kiro ;;
       6) install_opencode ;;
-      7) apps_install_all ;;
-      8) apps_show_status ;;
+      7) install_github ;;
+      8) install_cockpit_tools ;;
+      9) apps_install_all ;;
+      [Aa]) apps_show_status ;;
       0) return ;;
       *) warn "Pilihan tidak valid." ;;
     esac
@@ -698,7 +910,7 @@ while true; do
   echo -e "${NC}"
   echo -e "  ${BOLD}Pilih kategori:${NC}\n"
   echo -e "  ${GREEN}1)${NC} 🖥️   Setup   — XFCE + XRDP + Tailscale"
-  echo -e "  ${GREEN}2)${NC} 📦  Aplikasi — Chromium, Firefox, Node, VSCode, Kiro, OpenCode"
+  echo -e "  ${GREEN}2)${NC} 📦  Aplikasi — Chromium, Firefox, Node, VSCode, Kiro, OpenCode, GitHub, Cockpit Tools"
   echo -e "  ${GREEN}3)${NC} 🔧  Fix RDP  — Troubleshoot & Repair"
   echo -e "  ${RED}0)${NC} ❌  Keluar"
   echo ""

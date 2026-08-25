@@ -48,6 +48,64 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# ── Check Ubuntu ─────────────────────────────────────────────
+if [[ ! -f /etc/os-release ]]; then
+  echo -e "${RED}[ERROR]${NC} Sistem operasi tidak dikenali. Script ini hanya untuk Ubuntu."
+  exit 1
+fi
+
+source /etc/os-release
+
+if [[ "$ID" != "ubuntu" ]]; then
+  echo -e "${RED}[ERROR]${NC} Script ini hanya berjalan di Ubuntu."
+  echo -e "         Sistem terdeteksi: ${BOLD}$PRETTY_NAME${NC}"
+  exit 1
+fi
+
+UBUNTU_VERSION="$VERSION_ID"
+UBUNTU_CODENAME="$VERSION_CODENAME"
+UBUNTU_PRETTY="$PRETTY_NAME"
+
+# Cek versi minimum Ubuntu 20.04
+UBUNTU_MAJOR=$(echo "$UBUNTU_VERSION" | cut -d. -f1)
+if [[ "$UBUNTU_MAJOR" -lt 20 ]]; then
+  echo -e "${RED}[ERROR]${NC} Versi Ubuntu terlalu lama: $UBUNTU_PRETTY"
+  echo -e "         Minimal Ubuntu 20.04 LTS."
+  exit 1
+fi
+
+# Tampilkan info sistem
+echo -e "\n${BOLD}${CYAN}  ╔══════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}${CYAN}  ║        UBUNTU SETUP TOOL                 ║${NC}"
+echo -e "${BOLD}${CYAN}  ║   All-in-One · RDP · Apps · Fix          ║${NC}"
+echo -e "${BOLD}${CYAN}  ╚══════════════════════════════════════════╝${NC}\n"
+echo -e "  ${BOLD}Sistem Terdeteksi:${NC}"
+echo -e "  ${GREEN}✔${NC} OS      : $UBUNTU_PRETTY"
+echo -e "  ${GREEN}✔${NC} Versi   : $UBUNTU_VERSION ($UBUNTU_CODENAME)"
+echo -e "  ${GREEN}✔${NC} Arch    : $(dpkg --print-architecture)"
+echo -e "  ${GREEN}✔${NC} Kernel  : $(uname -r)"
+echo -e "  ${GREEN}✔${NC} User    : ${REAL_USER:-root}"
+echo -e "  ${GREEN}✔${NC} Hostname: $(hostname)"
+echo ""
+
+# Deteksi RAM & disk untuk referensi
+TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
+FREE_DISK=$(df -h / | awk 'NR==2{print $4}')
+echo -e "  ${BOLD}Resource:${NC}"
+echo -e "  RAM  : ${TOTAL_RAM}MB total"
+echo -e "  Disk : ${FREE_DISK} tersisa di /"
+echo ""
+
+# Warning jika RAM kurang dari 1GB
+if [[ "$TOTAL_RAM" -lt 1024 ]]; then
+  echo -e "  ${YELLOW}[WARN]${NC} RAM di bawah 1GB. Disarankan pakai LXDE/LXQt untuk desktop."
+elif [[ "$TOTAL_RAM" -lt 2048 ]]; then
+  echo -e "  ${YELLOW}[INFO]${NC} RAM 1-2GB. XFCE atau LXDE direkomendasikan."
+else
+  echo -e "  ${GREEN}[INFO]${NC} RAM cukup untuk semua Desktop Environment."
+fi
+echo ""
+
 # ── Detect user asli (bukan root) ────────────────────────────
 REAL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo '')}"
 REAL_HOME=$(getent passwd "$REAL_USER" 2>/dev/null | cut -d: -f6 || echo "/root")
@@ -458,9 +516,38 @@ install_chromium() {
   apt-get install -y chromium 2>/dev/null || \
   snap install chromium
 
-  if command -v chromium-browser &>/dev/null || command -v chromium &>/dev/null; then
-    log "Chromium berhasil diinstall."
-    info "Versi: $(chromium-browser --version 2>/dev/null || chromium --version 2>/dev/null)"
+  # Tentukan binary yang tersedia
+  CHROMIUM_BIN=""
+  command -v chromium-browser &>/dev/null && CHROMIUM_BIN="chromium-browser"
+  command -v chromium &>/dev/null && CHROMIUM_BIN="chromium"
+
+  if [[ -n "$CHROMIUM_BIN" ]]; then
+    log "Chromium berhasil diinstall: $($CHROMIUM_BIN --version 2>/dev/null)"
+
+    # Pastikan .desktop entry ada di start menu
+    DESKTOP_FILE="/usr/share/applications/chromium-browser.desktop"
+    if [[ ! -f "$DESKTOP_FILE" ]]; then
+      info "Membuat .desktop entry untuk start menu..."
+      mkdir -p /usr/share/applications
+      cat > "$DESKTOP_FILE" << EOF
+[Desktop Entry]
+Name=Chromium Web Browser
+Comment=Access the Internet
+Exec=$CHROMIUM_BIN %U
+Icon=chromium-browser
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml_xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=true
+EOF
+      chmod +x "$DESKTOP_FILE"
+      log ".desktop entry dibuat."
+    fi
+
+    # Refresh database aplikasi
+    update-desktop-database /usr/share/applications 2>/dev/null || true
+    log "Start menu di-refresh."
   else
     err "Chromium gagal diinstall."
   fi
@@ -748,6 +835,14 @@ install_cockpit_tools() {
       warn "Cockpit Tools mungkin terinstall. Cari di Application Menu atau:"
       info "find /opt /usr/share -iname '*cockpit*' 2>/dev/null"
     fi
+
+    # Refresh database aplikasi agar muncul di start menu
+    update-desktop-database /usr/share/applications 2>/dev/null || true
+    for USER_HOME in /home/* /root; do
+      [[ -d "$USER_HOME/.local/share/applications" ]] && \
+        update-desktop-database "$USER_HOME/.local/share/applications" 2>/dev/null || true
+    done
+    log "Start menu di-refresh."
 
     echo ""
     echo -e "  ${BOLD}Fitur Cockpit Tools:${NC}"
@@ -1055,6 +1150,103 @@ install_apk_all() {
 
   log "Workspace dibuat: $APK_WORKSPACE"
   apk_show_status
+}
+
+fix_desktop_entries() {
+  section "Fix Start Menu — Refresh Desktop Entries"
+  info "Memperbaiki dan me-refresh semua entri aplikasi di start menu..."
+
+  # 1. Refresh database utama
+  if command -v update-desktop-database &>/dev/null; then
+    update-desktop-database /usr/share/applications 2>/dev/null && \
+      log "Database /usr/share/applications di-refresh."
+  fi
+
+  # 2. Refresh per-user
+  for USER_HOME in /home/* /root; do
+    [[ -d "$USER_HOME" ]] || continue
+    USERNAME=$(basename "$USER_HOME")
+    USER_APP_DIR="$USER_HOME/.local/share/applications"
+    if [[ -d "$USER_APP_DIR" ]]; then
+      update-desktop-database "$USER_APP_DIR" 2>/dev/null && \
+        log "Refresh aplikasi user: $USERNAME"
+    fi
+  done
+
+  # 3. Buat ulang .desktop untuk Chromium jika tidak ada
+  CHROMIUM_BIN=""
+  command -v chromium-browser &>/dev/null && CHROMIUM_BIN="chromium-browser"
+  command -v chromium &>/dev/null && [[ -z "$CHROMIUM_BIN" ]] && CHROMIUM_BIN="chromium"
+  if [[ -n "$CHROMIUM_BIN" ]] && [[ ! -f /usr/share/applications/chromium-browser.desktop ]]; then
+    cat > /usr/share/applications/chromium-browser.desktop << EOF
+[Desktop Entry]
+Name=Chromium Web Browser
+Comment=Access the Internet
+Exec=$CHROMIUM_BIN %U
+Icon=chromium-browser
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml_xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=true
+EOF
+    chmod +x /usr/share/applications/chromium-browser.desktop
+    log "Desktop entry Chromium dibuat ulang."
+  fi
+
+  # 4. Buat ulang .desktop untuk Kiro jika tidak ada
+  if [[ -f /opt/kiro/bin/kiro ]] || [[ -f /usr/local/bin/kiro ]]; then
+    if [[ ! -f /usr/share/applications/kiro.desktop ]]; then
+      KIRO_EXEC=$(command -v kiro 2>/dev/null || echo "/opt/kiro/bin/kiro")
+      KIRO_ICON="/opt/kiro/resources/app/resources/linux/kiro.png"
+      cat > /usr/share/applications/kiro.desktop << EOF
+[Desktop Entry]
+Name=Kiro
+Comment=Kiro - AI-powered development environment
+Exec=$KIRO_EXEC %F
+Icon=$KIRO_ICON
+Terminal=false
+Type=Application
+Categories=Development;IDE;
+StartupWMClass=kiro
+StartupNotify=true
+EOF
+      chmod +x /usr/share/applications/kiro.desktop
+      log "Desktop entry Kiro dibuat ulang."
+    fi
+  fi
+
+  # 5. Buat ulang .desktop untuk VSCode jika tidak ada
+  if command -v code &>/dev/null && [[ ! -f /usr/share/applications/code.desktop ]]; then
+    cat > /usr/share/applications/code.desktop << EOF
+[Desktop Entry]
+Name=Visual Studio Code
+Comment=Code Editing. Redefined.
+Exec=code %F
+Icon=com.visualstudio.code
+Terminal=false
+Type=Application
+Categories=Development;TextEditor;
+MimeType=text/plain;inode/directory;
+StartupWMClass=Code
+StartupNotify=true
+EOF
+    chmod +x /usr/share/applications/code.desktop
+    log "Desktop entry VSCode dibuat ulang."
+  fi
+
+  # 6. Refresh sekali lagi setelah pembuatan ulang
+  update-desktop-database /usr/share/applications 2>/dev/null || true
+
+  # 7. Khusus XFCE: refresh panel
+  if command -v xfce4-panel &>/dev/null; then
+    DISPLAY="${DISPLAY:-:10}" xfce4-panel --restart 2>/dev/null || true
+    log "XFCE panel di-restart."
+  fi
+
+  echo ""
+  log "Selesai. Coba tutup dan buka kembali Application Menu."
+  warn "Jika masih belum muncul, coba logout dan login ulang ke sesi RDP."
 }
 
 apps_install_all() {
@@ -1426,9 +1618,10 @@ menu_apps() {
     echo -e "  ${GREEN}8)${NC} Cockpit Tools (AI IDE Account Manager)"
     echo -e "  ${YELLOW}9)${NC} Install Semua Aplikasi"
     echo -e "  ${CYAN}A)${NC} Cek Status Aplikasi"
+    echo -e "  ${CYAN}B)${NC} Fix Start Menu (Refresh Desktop Entries)"
     echo -e "  ${RED}0)${NC} Kembali ke Menu Utama"
     echo ""
-    read -rp "  Masukkan pilihan [0-9/A]: " CHOICE
+    read -rp "  Masukkan pilihan [0-9/A-B]: " CHOICE
     case "$CHOICE" in
       1) install_chromium ;;
       2) install_firefox_esr ;;
@@ -1440,6 +1633,7 @@ menu_apps() {
       8) install_cockpit_tools ;;
       9) apps_install_all ;;
       [Aa]) apps_show_status ;;
+      [Bb]) fix_desktop_entries ;;
       0) return ;;
       *) warn "Pilihan tidak valid." ;;
     esac
@@ -1541,11 +1735,12 @@ while true; do
   echo "  ║   All-in-One · RDP · Apps · Fix          ║"
   echo "  ╚══════════════════════════════════════════╝"
   echo -e "${NC}"
+  echo -e "  ${CYAN}Ubuntu ${UBUNTU_VERSION} (${UBUNTU_CODENAME}) · $(dpkg --print-architecture)${NC}\n"
   echo -e "  ${BOLD}Pilih kategori:${NC}\n"
-  echo -e "  ${GREEN}1)${NC} 🖥️   Setup   — XFCE + XRDP + Tailscale"
-  echo -e "  ${GREEN}2)${NC} 📦  Aplikasi — Chromium, Firefox, Node, VSCode, Kiro, OpenCode, GitHub, Cockpit Tools"
+  echo -e "  ${GREEN}1)${NC} 🖥️   Setup   — Desktop + XRDP + Tailscale"
+  echo -e "  ${GREEN}2)${NC} 📦  Aplikasi — Browser, Node, IDE, Tools"
   echo -e "  ${GREEN}3)${NC} 🔧  Fix RDP  — Troubleshoot & Repair"
-  echo -e "  ${GREEN}4)${NC} 📱  APK Tools — apktool, jadx, dex2jar, apksigner, zipalign"
+  echo -e "  ${GREEN}4)${NC} 📱  APK Tools — apktool, jadx, dex2jar, apksigner"
   echo -e "  ${RED}0)${NC} ❌  Keluar"
   echo ""
   read -rp "  Masukkan pilihan [0-4]: " MAIN_CHOICE

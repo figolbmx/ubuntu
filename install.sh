@@ -161,12 +161,21 @@ install_tailscale() {
 
 show_connection_info() {
   section "Info Koneksi RDP"
-  IP_LOCAL=$(hostname -I | awk '{print $1}')
+  IP_PRIVATE=$(hostname -I | awk '{print $1}')
   IP_TAILSCALE=$(tailscale ip -4 2>/dev/null || echo "Belum terkoneksi")
+
+  # Ambil IP publik dari beberapa layanan (fallback jika salah satu gagal)
+  info "Mengambil IP publik..."
+  IP_PUBLIC=$(curl -fsSL --max-time 5 https://api.ipify.org 2>/dev/null \
+    || curl -fsSL --max-time 5 https://ifconfig.me 2>/dev/null \
+    || curl -fsSL --max-time 5 https://icanhazip.com 2>/dev/null \
+    || echo "Tidak dapat diambil")
+
   echo ""
   echo -e "  ${BOLD}Koneksikan via Remote Desktop (RDP):${NC}"
   echo ""
-  echo -e "  ${YELLOW}IP Lokal     :${NC} $IP_LOCAL"
+  echo -e "  ${YELLOW}IP Publik    :${NC} $IP_PUBLIC"
+  echo -e "  ${YELLOW}IP Private   :${NC} $IP_PRIVATE"
   echo -e "  ${YELLOW}IP Tailscale :${NC} $IP_TAILSCALE"
   echo -e "  ${YELLOW}Port         :${NC} 3389"
   echo -e "  ${YELLOW}Username     :${NC} (user Ubuntu Anda)"
@@ -533,6 +542,175 @@ EOF
   echo ""
 }
 
+# ════════════════════════════════════════════════════════════
+#  APK TOOLS
+# ════════════════════════════════════════════════════════════
+
+APK_WORKSPACE="/home/${REAL_USER:-ubuntu}/apk-workspace"
+
+install_apk_java() {
+  section "Install OpenJDK 17"
+  info "Menginstall openjdk-17-jdk-headless..."
+  apt-get update -y
+  apt-get install -y openjdk-17-jdk-headless
+
+  if java -version 2>&1 | grep -q "17"; then
+    log "Java JDK 17 berhasil diinstall."
+    java -version 2>&1 | head -1
+  else
+    err "Java JDK 17 gagal diinstall."
+  fi
+}
+
+install_apktool() {
+  section "Install apktool"
+  info "Menginstall apktool via apt..."
+  apt-get install -y apktool
+
+  if command -v apktool &>/dev/null; then
+    log "apktool berhasil diinstall: $(apktool --version 2>/dev/null)"
+  else
+    err "apktool gagal diinstall."
+  fi
+}
+
+install_jadx() {
+  section "Install jadx (DEX/APK Decompiler)"
+  apt-get install -y curl unzip
+
+  info "Mengambil versi terbaru jadx dari GitHub..."
+  JADX_VER=$(curl -fsSL https://api.github.com/repos/skylot/jadx/releases/latest \
+    | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+  [[ -z "$JADX_VER" ]] && { warn "Gagal ambil versi, pakai fallback 1.5.0"; JADX_VER="1.5.0"; }
+
+  info "Download jadx v${JADX_VER}..."
+  JADX_TMP="/tmp/jadx-${JADX_VER}.zip"
+  curl -fsSL -o "$JADX_TMP" \
+    "https://github.com/skylot/jadx/releases/download/v${JADX_VER}/jadx-${JADX_VER}.zip"
+
+  rm -rf /opt/jadx
+  mkdir -p /opt/jadx
+  unzip -q "$JADX_TMP" -d /opt/jadx
+  rm -f "$JADX_TMP"
+
+  chmod +x /opt/jadx/bin/jadx /opt/jadx/bin/jadx-gui 2>/dev/null || true
+  ln -sf /opt/jadx/bin/jadx     /usr/local/bin/jadx
+  ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui
+
+  if [[ -x /opt/jadx/bin/jadx ]]; then
+    log "jadx v${JADX_VER} berhasil diinstall."
+  else
+    err "jadx gagal diinstall."
+  fi
+}
+
+install_dex2jar() {
+  section "Install dex2jar"
+  apt-get install -y curl unzip
+
+  info "Mengambil versi terbaru dex2jar dari GitHub..."
+  D2J_VER=$(curl -fsSL https://api.github.com/repos/pxb1988/dex2jar/releases/latest \
+    | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/')
+  [[ -z "$D2J_VER" ]] && { warn "Gagal ambil versi, pakai fallback 2.4"; D2J_VER="2.4"; }
+
+  info "Download dex2jar v${D2J_VER}..."
+  D2J_TMP="/tmp/dex2jar-${D2J_VER}.zip"
+  curl -fsSL -o "$D2J_TMP" \
+    "https://github.com/pxb1988/dex2jar/releases/download/v${D2J_VER}/dex-tools-v${D2J_VER}.zip"
+
+  rm -rf /opt/dex2jar
+  mkdir -p /opt/dex2jar
+  mkdir -p /tmp/dex2jar-extract
+  unzip -q "$D2J_TMP" -d /tmp/dex2jar-extract 2>/dev/null || true
+
+  # Handle nested dir
+  INNER=$(find /tmp/dex2jar-extract -maxdepth 1 -mindepth 1 -type d | head -1)
+  if [[ -n "$INNER" ]]; then
+    mv "$INNER"/* /opt/dex2jar/
+  else
+    mv /tmp/dex2jar-extract/* /opt/dex2jar/
+  fi
+  rm -rf /tmp/dex2jar-extract "$D2J_TMP"
+
+  chmod +x /opt/dex2jar/*.sh 2>/dev/null || true
+
+  for script in d2j-dex2jar.sh d2j-jar2dex.sh d2j-dex2smali.sh d2j-smali2dex.sh d2j-apk-sign.sh; do
+    [[ -f "/opt/dex2jar/$script" ]] && ln -sf "/opt/dex2jar/$script" "/usr/local/bin/$script"
+  done
+
+  if [[ -x /opt/dex2jar/d2j-dex2jar.sh ]]; then
+    log "dex2jar v${D2J_VER} berhasil diinstall."
+  else
+    warn "dex2jar mungkin bermasalah. Cek: /opt/dex2jar/"
+  fi
+}
+
+install_apksigner_zipalign() {
+  section "Install apksigner & zipalign"
+
+  info "Menginstall apksigner..."
+  apt-get install -y apksigner
+  command -v apksigner &>/dev/null && log "apksigner berhasil diinstall." || warn "apksigner tidak ditemukan di PATH."
+
+  info "Menginstall zipalign..."
+  apt-get install -y zipalign 2>/dev/null || \
+  apt-get install -y google-android-build-tools-installer 2>/dev/null || \
+  warn "zipalign tidak tersedia via apt. Gunakan alignment bawaan apktool."
+
+  command -v zipalign &>/dev/null && log "zipalign berhasil diinstall." || warn "zipalign tidak tersedia."
+}
+
+apk_show_status() {
+  section "Status APK Tools"
+  echo ""
+  _achk() {
+    local label="$1" cmd="$2"
+    if command -v "$cmd" &>/dev/null; then
+      echo -e "  ${GREEN}✔${NC} $label"
+    else
+      echo -e "  ${RED}✘${NC} $label — Belum diinstall"
+    fi
+  }
+  _achk "Java JDK 17"  "java"
+  _achk "apktool"      "apktool"
+  _achk "jadx"         "jadx"
+  _achk "dex2jar"      "d2j-dex2jar.sh"
+  _achk "apksigner"    "apksigner"
+  _achk "zipalign"     "zipalign"
+  echo ""
+  echo -e "  ${BOLD}Workspace APK:${NC} $APK_WORKSPACE"
+  echo ""
+  echo -e "  ${BOLD}${YELLOW}Quick Reference — APK Workflow:${NC}"
+  echo -e "  ${CYAN}Decompile  :${NC} apktool d app.apk -o output/"
+  echo -e "  ${CYAN}Recompile  :${NC} apktool b output/ -o rebuilt.apk"
+  echo -e "  ${CYAN}Decompile→Java :${NC} jadx app.apk -d jadx_out/"
+  echo -e "  ${CYAN}DEX→JAR    :${NC} d2j-dex2jar.sh app.apk -o out.jar"
+  echo -e "  ${CYAN}Sign APK   :${NC} apksigner sign --ks debug.keystore --ks-key-alias debugkey --ks-pass pass:android rebuilt.apk"
+  echo -e "  ${CYAN}Zipalign   :${NC} zipalign -v 4 rebuilt.apk aligned.apk"
+  echo ""
+}
+
+install_apk_all() {
+  section "Install Semua APK Tools"
+  warn "Akan menginstall: JDK 17, apktool, jadx, dex2jar, apksigner, zipalign"
+  read -rp "Lanjutkan? (y/N): " CONFIRM
+  [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && { info "Dibatalkan."; return; }
+
+  install_apk_java
+  install_apktool
+  install_jadx
+  install_dex2jar
+  install_apksigner_zipalign
+
+  # Buat workspace APK
+  mkdir -p "$APK_WORKSPACE"
+  [[ -n "$REAL_USER" && "$REAL_USER" != "root" ]] && \
+    chown -R "$REAL_USER:$REAL_USER" "$APK_WORKSPACE" 2>/dev/null || true
+
+  log "Workspace dibuat: $APK_WORKSPACE"
+  apk_show_status
+}
+
 apps_install_all() {
   section "Install Semua Aplikasi"
   warn "Akan menginstall: Chromium, Firefox ESR, Node.js+NPM, VSCode, Kiro, OpenCode"
@@ -560,6 +738,11 @@ apps_install_all() {
   command -v opencode &>/dev/null           && echo -e "  ${GREEN}✔${NC} OpenCode  : $(opencode --version 2>/dev/null || echo 'Terinstall')"
   command -v git &>/dev/null                && echo -e "  ${GREEN}✔${NC} Git       : $(git --version)"
   command -v gh &>/dev/null                 && echo -e "  ${GREEN}✔${NC} GitHub CLI: $(gh --version | head -1)"
+  command -v java &>/dev/null               && echo -e "  ${GREEN}✔${NC} Java      : $(java -version 2>&1 | head -1)"
+  command -v apktool &>/dev/null            && echo -e "  ${GREEN}✔${NC} apktool   : $(apktool --version 2>/dev/null)"
+  command -v jadx &>/dev/null               && echo -e "  ${GREEN}✔${NC} jadx      : Terinstall"
+  command -v d2j-dex2jar.sh &>/dev/null     && echo -e "  ${GREEN}✔${NC} dex2jar   : Terinstall"
+  command -v apksigner &>/dev/null          && echo -e "  ${GREEN}✔${NC} apksigner : Terinstall"
   echo ""
 }
 
@@ -574,17 +757,24 @@ apps_show_status() {
       echo -e "  ${RED}✘${NC} $label — Belum diinstall"
     fi
   }
-  _chk "Chromium"    "chromium-browser" "chromium-browser --version"
-  _chk "Chromium"    "chromium"         "chromium --version"
-  _chk "Firefox ESR" "firefox-esr"      "firefox-esr --version"
-  _chk "Node.js"     "node"             "node --version"
-  _chk "NPM"         "npm"              "npm --version"
-  _chk "VSCode"      "code"             "code --version"
-  _chk "Kiro"        "kiro"             "kiro --version"
-  _chk "OpenCode"    "opencode"         "opencode --version"
-  _chk "Git"         "git"              "git --version"
-  _chk "GitHub CLI"  "gh"               "gh --version"
-  _chk "Cockpit Tools" "cockpit-tools"  "cockpit-tools --version"
+  _chk "Chromium"      "chromium-browser"  "chromium-browser --version"
+  _chk "Chromium"      "chromium"          "chromium --version"
+  _chk "Firefox ESR"   "firefox-esr"       "firefox-esr --version"
+  _chk "Node.js"       "node"              "node --version"
+  _chk "NPM"           "npm"               "npm --version"
+  _chk "VSCode"        "code"              "code --version"
+  _chk "Kiro"          "kiro"              "kiro --version"
+  _chk "OpenCode"      "opencode"          "opencode --version"
+  _chk "Git"           "git"               "git --version"
+  _chk "GitHub CLI"    "gh"                "gh --version"
+  _chk "Cockpit Tools" "cockpit-tools"     "cockpit-tools --version"
+  echo -e "\n  ${BOLD}— APK Tools —${NC}"
+  _chk "Java JDK 17"   "java"              "java -version"
+  _chk "apktool"       "apktool"           "apktool --version"
+  _chk "jadx"          "jadx"              "jadx --version"
+  _chk "dex2jar"       "d2j-dex2jar.sh"    "d2j-dex2jar.sh --version"
+  _chk "apksigner"     "apksigner"         "apksigner --version"
+  _chk "zipalign"      "zipalign"          "zipalign"
   echo ""
 }
 
@@ -914,6 +1104,45 @@ menu_fix() {
 }
 
 # ════════════════════════════════════════════════════════════
+#  SUB-MENU 4 — APK TOOLS
+# ════════════════════════════════════════════════════════════
+
+menu_apk() {
+  while true; do
+    clear
+    echo -e "${BOLD}${CYAN}"
+    echo "  ╔══════════════════════════════════════════╗"
+    echo "  ║   APK TOOLS                              ║"
+    echo "  ║   Decompile · Recompile · Sign · Analyze ║"
+    echo "  ╚══════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo -e "  ${BOLD}Pilih opsi:${NC}\n"
+    echo -e "  ${GREEN}1)${NC} Install Java JDK 17 (Wajib)"
+    echo -e "  ${GREEN}2)${NC} Install apktool (Decompile/Recompile APK)"
+    echo -e "  ${GREEN}3)${NC} Install jadx (Decompile ke Java)"
+    echo -e "  ${GREEN}4)${NC} Install dex2jar (DEX → JAR)"
+    echo -e "  ${GREEN}5)${NC} Install apksigner & zipalign (Sign APK)"
+    echo -e "  ${YELLOW}6)${NC} Install Semua APK Tools"
+    echo -e "  ${CYAN}7)${NC} Status & Quick Reference"
+    echo -e "  ${RED}0)${NC} Kembali ke Menu Utama"
+    echo ""
+    read -rp "  Masukkan pilihan [0-7]: " CHOICE
+    case "$CHOICE" in
+      1) install_apk_java ;;
+      2) install_apktool ;;
+      3) install_jadx ;;
+      4) install_dex2jar ;;
+      5) install_apksigner_zipalign ;;
+      6) install_apk_all ;;
+      7) apk_show_status ;;
+      0) return ;;
+      *) warn "Pilihan tidak valid." ;;
+    esac
+    echo ""; read -rp "  Tekan Enter untuk kembali ke menu..."
+  done
+}
+
+# ════════════════════════════════════════════════════════════
 #  MENU UTAMA
 # ════════════════════════════════════════════════════════════
 
@@ -929,13 +1158,15 @@ while true; do
   echo -e "  ${GREEN}1)${NC} 🖥️   Setup   — XFCE + XRDP + Tailscale"
   echo -e "  ${GREEN}2)${NC} 📦  Aplikasi — Chromium, Firefox, Node, VSCode, Kiro, OpenCode, GitHub, Cockpit Tools"
   echo -e "  ${GREEN}3)${NC} 🔧  Fix RDP  — Troubleshoot & Repair"
+  echo -e "  ${GREEN}4)${NC} 📱  APK Tools — apktool, jadx, dex2jar, apksigner, zipalign"
   echo -e "  ${RED}0)${NC} ❌  Keluar"
   echo ""
-  read -rp "  Masukkan pilihan [0-3]: " MAIN_CHOICE
+  read -rp "  Masukkan pilihan [0-4]: " MAIN_CHOICE
   case "$MAIN_CHOICE" in
     1) menu_setup ;;
     2) menu_apps ;;
     3) menu_fix ;;
+    4) menu_apk ;;
     0) echo -e "\n${GREEN}Keluar.${NC}\n"; exit 0 ;;
     *) warn "Pilihan tidak valid. Coba lagi."; sleep 1 ;;
   esac

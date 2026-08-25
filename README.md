@@ -3,7 +3,7 @@
 Script bash interaktif untuk setup Ubuntu VPS dengan cepat. Satu file, semua kebutuhan.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/figolbmx/ubuntu/main/install.sh -o install.sh && chmod +x install.sh && sudo bash install.sh
+curl -fsSL https://raw.githubusercontent.com/figolbmx/ubuntu/main/install.sh | sudo bash
 ```
 
 ---

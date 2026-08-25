@@ -7,6 +7,25 @@
 #  Tested on: Ubuntu 20.04 / 22.04 / 24.04
 #  Run as root or with sudo
 # ============================================================
+#
+#  CARA MENJALANKAN:
+#
+#  [Metode 1] Langsung dari GitHub (Tercepat):
+#
+#    curl -fsSL https://raw.githubusercontent.com/figolbmx/ubuntu/main/install.sh | sudo bash
+#
+#  [Metode 2] Download dulu, baru jalankan:
+#
+#    curl -fsSL https://raw.githubusercontent.com/figolbmx/ubuntu/main/install.sh -o install.sh
+#    chmod +x install.sh
+#    sudo bash install.sh
+#
+#  [Metode 3] Jika sudah ada file-nya:
+#
+#    chmod +x install.sh
+#    sudo bash install.sh
+#
+# ============================================================
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

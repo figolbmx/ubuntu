@@ -16,9 +16,7 @@
 #
 #  [Metode 2] Download dulu, baru jalankan:
 #
-#    curl -fsSL https://raw.githubusercontent.com/figolbmx/ubuntu/main/install.sh -o install.sh
-#    chmod +x install.sh
-#    sudo bash install.sh
+#    curl -fsSL https://raw.githubusercontent.com/figolbmx/ubuntu/main/install.sh -o install.sh && chmod +x install.sh && sudo bash install.sh
 #
 #  [Metode 3] Jika sudah ada file-nya:
 #

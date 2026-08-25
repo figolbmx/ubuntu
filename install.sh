@@ -77,8 +77,74 @@ install_xfce() {
   log "XFCE4 berhasil diinstall."
 }
 
+install_lxde() {
+  section "Install LXDE Desktop Environment"
+  info "Menginstall LXDE dan paket pendukung..."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    lxde lxde-core lxappearance xorg dbus-x11 x11-xserver-utils
+  log "LXDE berhasil diinstall."
+}
+
+install_lxqt() {
+  section "Install LXQt Desktop Environment"
+  info "Menginstall LXQt dan paket pendukung..."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    lxqt sddm xorg dbus-x11 x11-xserver-utils
+  log "LXQt berhasil diinstall."
+}
+
+# Variabel global untuk menyimpan pilihan desktop
+SELECTED_DE="xfce4"
+SELECTED_DE_CMD="startxfce4"
+SELECTED_DE_NAME="XFCE4"
+
+choose_desktop() {
+  clear
+  echo -e "${BOLD}${CYAN}"
+  echo "  ╔══════════════════════════════════════════╗"
+  echo "  ║   PILIH DESKTOP ENVIRONMENT              ║"
+  echo "  ╚══════════════════════════════════════════╝"
+  echo -e "${NC}"
+  echo -e "  Pilih desktop environment untuk RDP:\n"
+  echo -e "  ${GREEN}1)${NC} ${BOLD}XFCE4${NC}  — Ringan, stabil, tampilan klasik"
+  echo -e "           RAM ~300MB | Direkomendasikan untuk VPS 2GB+"
+  echo ""
+  echo -e "  ${GREEN}2)${NC} ${BOLD}LXDE${NC}   — Paling ringan, tampilan polos/simpel"
+  echo -e "           RAM ~200MB | Cocok untuk VPS 1GB"
+  echo ""
+  echo -e "  ${GREEN}3)${NC} ${BOLD}LXQt${NC}   — Lebih modern dari LXDE, tetap ringan"
+  echo -e "           RAM ~250MB | Tampilan lebih rapi dari LXDE"
+  echo ""
+  echo -e "  ${CYAN}Desktop saat ini:${NC} $SELECTED_DE_NAME"
+  echo ""
+  read -rp "  Pilih desktop [1-3]: " DE_CHOICE
+  case "$DE_CHOICE" in
+    1)
+      SELECTED_DE="xfce4"
+      SELECTED_DE_CMD="startxfce4"
+      SELECTED_DE_NAME="XFCE4"
+      log "Desktop dipilih: XFCE4"
+      ;;
+    2)
+      SELECTED_DE="lxde"
+      SELECTED_DE_CMD="startlxde"
+      SELECTED_DE_NAME="LXDE"
+      log "Desktop dipilih: LXDE"
+      ;;
+    3)
+      SELECTED_DE="lxqt"
+      SELECTED_DE_CMD="startlxqt"
+      SELECTED_DE_NAME="LXQt"
+      log "Desktop dipilih: LXQt"
+      ;;
+    *)
+      warn "Pilihan tidak valid, tetap pakai: $SELECTED_DE_NAME"
+      ;;
+  esac
+}
+
 install_xrdp() {
-  section "Install & Konfigurasi XRDP"
+  section "Install & Konfigurasi XRDP (Desktop: $SELECTED_DE_NAME)"
 
   info "Menginstall XRDP..."
   DEBIAN_FRONTEND=noninteractive apt-get install -y xrdp
@@ -86,29 +152,29 @@ install_xrdp() {
   info "Menambahkan user xrdp ke grup ssl-cert..."
   adduser xrdp ssl-cert 2>/dev/null || true
 
-  info "Konfigurasi startwm.sh untuk menggunakan XFCE..."
-  cat > /etc/xrdp/startwm.sh << 'EOF'
+  info "Konfigurasi startwm.sh untuk menggunakan $SELECTED_DE_NAME..."
+  cat > /etc/xrdp/startwm.sh << EOF
 #!/bin/sh
 unset DBUS_SESSION_BUS_ADDRESS
 unset XDG_RUNTIME_DIR
-exec /usr/bin/startxfce4
+exec /usr/bin/${SELECTED_DE_CMD}
 EOF
   chmod +x /etc/xrdp/startwm.sh
 
   info "Set .xsession untuk semua user..."
   [[ -n "$SUDO_USER" ]] && {
     USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    echo "startxfce4" > "$USER_HOME/.xsession"
+    echo "${SELECTED_DE_CMD}" > "$USER_HOME/.xsession"
     chown "$SUDO_USER:$SUDO_USER" "$USER_HOME/.xsession"
     log "Set .xsession untuk user: $SUDO_USER"
   }
   for USER_HOME in /home/*; do
     [[ -d "$USER_HOME" ]] || continue
     USERNAME=$(basename "$USER_HOME")
-    echo "startxfce4" > "$USER_HOME/.xsession"
+    echo "${SELECTED_DE_CMD}" > "$USER_HOME/.xsession"
     chown "$USERNAME:$USERNAME" "$USER_HOME/.xsession" 2>/dev/null || true
   done
-  echo "startxfce4" > /root/.xsession
+  echo "${SELECTED_DE_CMD}" > /root/.xsession
 
   info "Konfigurasi Polkit (mencegah popup auth di sesi RDP)..."
   mkdir -p /etc/polkit-1/localauthority/50-local.d/
@@ -195,21 +261,189 @@ show_connection_info() {
 }
 
 setup_xfce_xrdp_full() {
-  section "Install Lengkap: XFCE + XRDP"
-  warn "Akan menginstall: Timezone, Update sistem, XFCE4, XRDP"
+  section "Install Lengkap: Desktop + XRDP"
+  choose_desktop
+  warn "Akan menginstall: Timezone, Update sistem, $SELECTED_DE_NAME, XRDP"
   read -rp "Lanjutkan? (y/N): " CONFIRM
   [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && { info "Dibatalkan."; return; }
-  set_timezone; update_system; install_xfce; install_xrdp
+  set_timezone
+  update_system
+  case "$SELECTED_DE" in
+    xfce4) install_xfce ;;
+    lxde)  install_lxde ;;
+    lxqt)  install_lxqt ;;
+  esac
+  install_xrdp
   show_connection_info
 }
 
 setup_all() {
-  section "Install Semua: XFCE + XRDP + Tailscale"
-  warn "Akan menginstall: Timezone, Update sistem, XFCE4, XRDP, Tailscale"
+  section "Install Semua: Desktop + XRDP + Tailscale"
+  choose_desktop
+  warn "Akan menginstall: Timezone, Update sistem, $SELECTED_DE_NAME, XRDP, Tailscale"
   read -rp "Lanjutkan? (y/N): " CONFIRM
   [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && { info "Dibatalkan."; return; }
-  set_timezone; update_system; install_xfce; install_xrdp; install_tailscale
+  set_timezone
+  update_system
+  case "$SELECTED_DE" in
+    xfce4) install_xfce ;;
+    lxde)  install_lxde ;;
+    lxqt)  install_lxqt ;;
+  esac
+  install_xrdp
+  install_tailscale
   show_connection_info
+}
+
+# ════════════════════════════════════════════════════════════
+#  UNINSTALL — DESKTOP & XRDP
+# ════════════════════════════════════════════════════════════
+
+uninstall_xrdp() {
+  section "Hapus XRDP"
+  warn "Ini akan menghapus XRDP dan semua konfigurasinya."
+  read -rp "Lanjutkan? (y/N): " CONFIRM
+  [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && { info "Dibatalkan."; return; }
+
+  info "Menghentikan service XRDP..."
+  systemctl stop xrdp xrdp-sesman 2>/dev/null || true
+  systemctl disable xrdp 2>/dev/null || true
+
+  info "Menghapus paket XRDP..."
+  apt-get purge -y xrdp
+  apt-get autoremove -y
+
+  info "Membersihkan file konfigurasi sisa..."
+  rm -rf /etc/xrdp 2>/dev/null || true
+  rm -f /etc/polkit-1/localauthority/50-local.d/45-allow-colord.pkla 2>/dev/null || true
+
+  info "Membersihkan .xsession semua user..."
+  rm -f /root/.xsession
+  for USER_HOME in /home/*; do
+    [[ -d "$USER_HOME" ]] && rm -f "$USER_HOME/.xsession"
+  done
+
+  info "Menutup port 3389 di UFW (jika aktif)..."
+  if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+    ufw delete allow 3389/tcp 2>/dev/null || true
+    ufw reload
+    log "Port 3389 ditutup di UFW."
+  fi
+
+  log "XRDP berhasil dihapus."
+}
+
+uninstall_desktop() {
+  section "Hapus Desktop Environment"
+  echo ""
+  echo -e "  ${BOLD}Pilih Desktop Environment yang ingin dihapus:${NC}\n"
+  echo -e "  ${GREEN}1)${NC} Hapus XFCE4"
+  echo -e "  ${GREEN}2)${NC} Hapus LXDE"
+  echo -e "  ${GREEN}3)${NC} Hapus LXQt"
+  echo -e "  ${YELLOW}4)${NC} Hapus Semua (XFCE4 + LXDE + LXQt)"
+  echo -e "  ${RED}0)${NC} Batal"
+  echo ""
+  read -rp "  Pilihan [0-4]: " DE_DEL
+
+  case "$DE_DEL" in
+    0) info "Dibatalkan."; return ;;
+    1) DE_LIST="xfce4"; DE_LABEL="XFCE4" ;;
+    2) DE_LIST="lxde";  DE_LABEL="LXDE"  ;;
+    3) DE_LIST="lxqt";  DE_LABEL="LXQt"  ;;
+    4) DE_LIST="xfce4 lxde lxqt"; DE_LABEL="XFCE4 + LXDE + LXQt" ;;
+    *) warn "Pilihan tidak valid."; return ;;
+  esac
+
+  warn "Akan menghapus: $DE_LABEL beserta paket pendukungnya."
+  read -rp "Lanjutkan? (y/N): " CONFIRM
+  [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && { info "Dibatalkan."; return; }
+
+  for DE in $DE_LIST; do
+    info "Menghapus $DE..."
+    case "$DE" in
+      xfce4)
+        apt-get purge -y xfce4 xfce4-goodies xfce4-session xfwm4 \
+          xfce4-panel xfce4-terminal thunar 2>/dev/null || true
+        ;;
+      lxde)
+        apt-get purge -y lxde lxde-core lxappearance lxsession \
+          lxpanel lxterminal pcmanfm 2>/dev/null || true
+        ;;
+      lxqt)
+        apt-get purge -y lxqt lxqt-core sddm lxqt-session \
+          lxqt-panel lxterminal 2>/dev/null || true
+        ;;
+    esac
+  done
+
+  info "Membersihkan paket orphan dan cache..."
+  apt-get autoremove -y
+  apt-get autoclean -y
+
+  info "Menghapus konfigurasi desktop yang tersisa..."
+  for USER_HOME in /home/* /root; do
+    [[ -d "$USER_HOME" ]] || continue
+    USERNAME=$(stat -c '%U' "$USER_HOME" 2>/dev/null || echo "unknown")
+    for DE in $DE_LIST; do
+      if [[ -d "$USER_HOME/.config/$DE" ]]; then
+        rm -rf "$USER_HOME/.config/$DE"
+        log "Hapus config $DE untuk user: $USERNAME"
+      fi
+    done
+    # Hapus .xsession jika merujuk ke DE yang dihapus
+    if [[ -f "$USER_HOME/.xsession" ]]; then
+      XSES=$(cat "$USER_HOME/.xsession")
+      for DE in $DE_LIST; do
+        [[ "$XSES" == *"$DE"* ]] && rm -f "$USER_HOME/.xsession" && \
+          log "Hapus .xsession untuk user: $USERNAME"
+      done
+    fi
+  done
+
+  log "$DE_LABEL berhasil dihapus. Sistem lebih clean sekarang."
+  info "Jalankan install desktop baru dan XRDP untuk setup ulang."
+}
+
+uninstall_all_desktop_xrdp() {
+  section "Hapus Semua — Desktop + XRDP (Clean Uninstall)"
+  warn "Ini akan menghapus XRDP dan semua Desktop Environment yang terinstall."
+  warn "Sistem akan kembali ke mode server tanpa GUI."
+  read -rp "Lanjutkan? (y/N): " CONFIRM
+  [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && { info "Dibatalkan."; return; }
+
+  # Jalankan uninstall XRDP dulu (tanpa konfirmasi ulang)
+  info "Menghentikan dan menghapus XRDP..."
+  systemctl stop xrdp xrdp-sesman 2>/dev/null || true
+  systemctl disable xrdp 2>/dev/null || true
+  apt-get purge -y xrdp 2>/dev/null || true
+  rm -rf /etc/xrdp 2>/dev/null || true
+  rm -f /etc/polkit-1/localauthority/50-local.d/45-allow-colord.pkla 2>/dev/null || true
+
+  info "Menghapus semua Desktop Environment..."
+  apt-get purge -y \
+    xfce4 xfce4-goodies xfce4-session xfwm4 xfce4-panel xfce4-terminal thunar \
+    lxde lxde-core lxappearance lxsession lxpanel lxterminal pcmanfm \
+    lxqt lxqt-core sddm lxqt-session lxqt-panel \
+    xorg x11-xserver-utils dbus-x11 \
+    2>/dev/null || true
+
+  info "Membersihkan paket orphan..."
+  apt-get autoremove -y
+  apt-get autoclean -y
+
+  info "Membersihkan file konfigurasi sisa..."
+  rm -f /root/.xsession
+  for USER_HOME in /home/*; do
+    [[ -d "$USER_HOME" ]] && rm -f "$USER_HOME/.xsession"
+  done
+
+  if command -v ufw &>/dev/null && ufw status | grep -q "Status: active"; then
+    ufw delete allow 3389/tcp 2>/dev/null || true
+    ufw reload
+  fi
+
+  log "Clean uninstall selesai. VPS kembali ke mode server (headless)."
+  info "Untuk setup ulang, jalankan menu Setup dari awal."
 }
 
 # ════════════════════════════════════════════════════════════
@@ -984,30 +1218,47 @@ menu_setup() {
     clear
     echo -e "${BOLD}${CYAN}"
     echo "  ╔══════════════════════════════════════════╗"
-    echo "  ║   SETUP — XFCE + XRDP + Tailscale        ║"
+    echo "  ║   SETUP — Desktop + XRDP + Tailscale     ║"
     echo "  ╚══════════════════════════════════════════╝"
     echo -e "${NC}"
-    echo -e "  ${BOLD}Pilih opsi instalasi:${NC}\n"
-    echo -e "  ${GREEN}1)${NC} Set Timezone → Asia/Jakarta (WIB)"
-    echo -e "  ${GREEN}2)${NC} Update & Upgrade Sistem"
-    echo -e "  ${GREEN}3)${NC} Install XFCE4 Desktop"
-    echo -e "  ${GREEN}4)${NC} Install & Konfigurasi XRDP"
-    echo -e "  ${GREEN}5)${NC} Install Tailscale VPN"
-    echo -e "  ${YELLOW}6)${NC} Install Lengkap: XFCE + XRDP"
-    echo -e "  ${YELLOW}7)${NC} Install Semua: XFCE + XRDP + Tailscale"
-    echo -e "  ${CYAN}8)${NC} Info Koneksi RDP"
+    echo -e "  ${BOLD}Pilih opsi instalasi:${NC}"
+    echo -e "  ${CYAN}Desktop aktif: ${YELLOW}$SELECTED_DE_NAME${NC}\n"
+    echo -e "  ${BOLD}── Install ──────────────────────────────${NC}"
+    echo -e "  ${GREEN}1)${NC} Pilih Desktop Environment (XFCE4 / LXDE / LXQt)"
+    echo -e "  ${GREEN}2)${NC} Set Timezone → Asia/Jakarta (WIB)"
+    echo -e "  ${GREEN}3)${NC} Update & Upgrade Sistem"
+    echo -e "  ${GREEN}4)${NC} Install Desktop ($SELECTED_DE_NAME)"
+    echo -e "  ${GREEN}5)${NC} Install & Konfigurasi XRDP"
+    echo -e "  ${GREEN}6)${NC} Install Tailscale VPN"
+    echo -e "  ${YELLOW}7)${NC} Install Lengkap: Desktop + XRDP"
+    echo -e "  ${YELLOW}8)${NC} Install Semua: Desktop + XRDP + Tailscale"
+    echo -e "  ${CYAN}9)${NC} Info Koneksi RDP"
+    echo -e ""
+    echo -e "  ${BOLD}── Uninstall / Clean ────────────────────${NC}"
+    echo -e "  ${RED}A)${NC} Hapus XRDP"
+    echo -e "  ${RED}B)${NC} Hapus Desktop Environment"
+    echo -e "  ${RED}C)${NC} Hapus Semua (Desktop + XRDP) — Clean"
+    echo -e ""
     echo -e "  ${RED}0)${NC} Kembali ke Menu Utama"
     echo ""
-    read -rp "  Masukkan pilihan [0-8]: " CHOICE
-    case "$CHOICE" in
-      1) set_timezone ;;
-      2) update_system ;;
-      3) install_xfce ;;
-      4) install_xrdp ;;
-      5) install_tailscale ;;
-      6) setup_xfce_xrdp_full ;;
-      7) setup_all ;;
-      8) show_connection_info ;;
+    read -rp "  Masukkan pilihan [0-9/A-C]: " CHOICE
+    case "${CHOICE^^}" in
+      1) choose_desktop ;;
+      2) set_timezone ;;
+      3) update_system ;;
+      4) case "$SELECTED_DE" in
+           xfce4) install_xfce ;;
+           lxde)  install_lxde ;;
+           lxqt)  install_lxqt ;;
+         esac ;;
+      5) install_xrdp ;;
+      6) install_tailscale ;;
+      7) setup_xfce_xrdp_full ;;
+      8) setup_all ;;
+      9) show_connection_info ;;
+      A) uninstall_xrdp ;;
+      B) uninstall_desktop ;;
+      C) uninstall_all_desktop_xrdp ;;
       0) return ;;
       *) warn "Pilihan tidak valid." ;;
     esac

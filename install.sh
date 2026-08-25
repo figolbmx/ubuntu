@@ -122,32 +122,61 @@ set_timezone() {
 
 update_system() {
   section "Update & Upgrade Sistem"
+  info "Pilih opsi update:\n"
+  echo -e "  ${GREEN}1)${NC} apt update saja          — Refresh daftar paket (cepat, wajib)"
+  echo -e "  ${GREEN}2)${NC} apt update + upgrade      — Refresh + upgrade semua paket (lambat)"
+  echo ""
+  read -rp "  Pilihan [1/2, default=1]: " UPD_CHOICE
+  UPD_CHOICE="${UPD_CHOICE:-1}"
+
+  info "Refresh daftar paket..."
   apt-get update -y
-  apt-get upgrade -y
-  log "Sistem berhasil diupdate."
+
+  if [[ "$UPD_CHOICE" == "2" ]]; then
+    info "Upgrade semua paket sistem (ini bisa memakan waktu lama)..."
+    apt-get upgrade -y
+    log "Update + upgrade selesai."
+  else
+    log "Update (refresh) selesai. Upgrade dilewati."
+  fi
 }
 
 install_xfce() {
   section "Install XFCE4 Desktop Environment"
-  info "Menginstall XFCE4 dan paket pendukung..."
+  info "Menginstall XFCE4 + xfce4-goodies + XRDP standar..."
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    xfce4 xfce4-goodies xorg dbus-x11 x11-xserver-utils
+    xfce4 \
+    xfce4-goodies \
+    xorg \
+    dbus-x11 \
+    x11-xserver-utils
   log "XFCE4 berhasil diinstall."
 }
 
 install_lxde() {
   section "Install LXDE Desktop Environment"
-  info "Menginstall LXDE dan paket pendukung..."
+  info "Menginstall LXDE (minimal)..."
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    lxde lxde-core lxappearance xorg dbus-x11 x11-xserver-utils
+    lxde-core \
+    lxterminal \
+    lxappearance \
+    pcmanfm \
+    xorg \
+    dbus-x11 \
+    x11-xserver-utils
   log "LXDE berhasil diinstall."
 }
 
 install_lxqt() {
   section "Install LXQt Desktop Environment"
-  info "Menginstall LXQt dan paket pendukung..."
+  info "Menginstall LXQt (minimal)..."
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    lxqt sddm xorg dbus-x11 x11-xserver-utils
+    lxqt-core \
+    qterminal \
+    pcmanfm-qt \
+    xorg \
+    dbus-x11 \
+    x11-xserver-utils
   log "LXQt berhasil diinstall."
 }
 
@@ -318,14 +347,17 @@ show_connection_info() {
   echo -e "  Timezone  : $(timedatectl | grep 'Time zone' | awk '{print $3}')"
 }
 
-setup_xfce_xrdp_full() {
+setup_desktop_xrdp() {
   section "Install Lengkap: Desktop + XRDP"
   choose_desktop
-  warn "Akan menginstall: Timezone, Update sistem, $SELECTED_DE_NAME, XRDP"
+  warn "Akan menginstall: $SELECTED_DE_NAME + XRDP"
+  echo -e "  ${CYAN}Setara dengan:${NC} sudo apt install -y xfce4 xfce4-goodies xrdp\n"
   read -rp "Lanjutkan? (y/N): " CONFIRM
   [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && { info "Dibatalkan."; return; }
-  set_timezone
-  update_system
+
+  info "Refresh daftar paket (apt update)..."
+  apt-get update -y
+
   case "$SELECTED_DE" in
     xfce4) install_xfce ;;
     lxde)  install_lxde ;;
@@ -338,11 +370,13 @@ setup_xfce_xrdp_full() {
 setup_all() {
   section "Install Semua: Desktop + XRDP + Tailscale"
   choose_desktop
-  warn "Akan menginstall: Timezone, Update sistem, $SELECTED_DE_NAME, XRDP, Tailscale"
+  warn "Akan menginstall: $SELECTED_DE_NAME + XRDP + Tailscale"
   read -rp "Lanjutkan? (y/N): " CONFIRM
   [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && { info "Dibatalkan."; return; }
-  set_timezone
-  update_system
+
+  info "Refresh daftar paket (apt update)..."
+  apt-get update -y
+
   case "$SELECTED_DE" in
     xfce4) install_xfce ;;
     lxde)  install_lxde ;;
@@ -1581,7 +1615,7 @@ menu_setup() {
          esac ;;
       5) install_xrdp ;;
       6) install_tailscale ;;
-      7) setup_xfce_xrdp_full ;;
+      7) setup_desktop_xrdp ;;
       8) setup_all ;;
       9) show_connection_info ;;
       A) uninstall_xrdp ;;

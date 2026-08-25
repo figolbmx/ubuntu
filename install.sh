@@ -491,23 +491,45 @@ EOF
 
 install_nodejs() {
   section "Install Node.js LTS Terbaru + NPM"
+
+  info "Menghapus nodejs/npm lama jika ada..."
   apt-get remove -y nodejs npm 2>/dev/null || true
+  apt-get autoremove -y 2>/dev/null || true
+
+  # Hapus repo NodeSource lama agar tidak konflik
+  rm -f /etc/apt/sources.list.d/nodesource.list \
+        /etc/apt/sources.list.d/nodejs.list \
+        /usr/share/keyrings/nodesource.gpg 2>/dev/null || true
+
   apt-get install -y curl ca-certificates gnupg
 
   info "Mendeteksi versi LTS terbaru..."
-  NODE_MAJOR=$(curl -fsSL https://resolve.nodesource.com/v1/latest-lts | \
-    grep -oP '"version"\s*:\s*"\K[0-9]+' | head -1 2>/dev/null || echo "20")
+  NODE_MAJOR=$(curl -fsSL --max-time 10 https://resolve.nodesource.com/v1/latest-lts \
+    | grep -oP '"version"\s*:\s*"\K[0-9]+' | head -1 2>/dev/null || echo "20")
+  info "Versi LTS: v${NODE_MAJOR}.x"
 
-  info "Menginstall Node.js v$NODE_MAJOR LTS..."
+  info "Menambahkan repository NodeSource..."
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -
+
+  info "Menginstall nodejs (include npm)..."
   apt-get install -y nodejs
 
-  if command -v node &>/dev/null; then
-    log "Node.js berhasil diinstall."
-    info "Node: $(node --version) | NPM: $(npm --version)"
+  # npm kadang tidak terinstall otomatis, pastikan eksplisit
+  if ! command -v npm &>/dev/null; then
+    info "NPM tidak ditemukan, install eksplisit..."
+    apt-get install -y npm 2>/dev/null || \
+    curl -fsSL https://npmjs.com/install.sh | sh 2>/dev/null || true
+  fi
+
+  if command -v node &>/dev/null && command -v npm &>/dev/null; then
+    log "Node.js berhasil diinstall: $(node --version)"
+    log "NPM berhasil diinstall   : $(npm --version)"
     info "Update NPM ke versi terbaru..."
-    npm install -g npm@latest
-    log "NPM diupdate: $(npm --version)"
+    npm install -g npm@latest 2>/dev/null && log "NPM diupdate: $(npm --version)"
+  elif command -v node &>/dev/null; then
+    log "Node.js: $(node --version)"
+    err "NPM tetap tidak ditemukan setelah install."
+    info "Coba manual: apt-get install -y npm"
   else
     err "Node.js gagal diinstall."
   fi
@@ -515,13 +537,22 @@ install_nodejs() {
 
 install_vscode() {
   section "Install Visual Studio Code"
-  apt-get install -y wget gpg apt-transport-https
+  apt-get install -y wget gpg apt-transport-https curl
 
-  wget -qO- https://packages.microsoft.com/keys/microsoft.asc | \
-    gpg --dearmor > /etc/apt/keyrings/microsoft.gpg
+  info "Menambahkan GPG key Microsoft..."
+  mkdir -p /etc/apt/keyrings
+
+  # Hapus key lama yang mungkin konflik
+  rm -f /etc/apt/keyrings/microsoft.gpg \
+        /usr/share/keyrings/microsoft.gpg \
+        /etc/apt/sources.list.d/vscode.list 2>/dev/null || true
+
+  curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+    | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg
   chmod go+r /etc/apt/keyrings/microsoft.gpg
 
-  echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.gpg] \
+  ARCH=$(dpkg --print-architecture)
+  echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/microsoft.gpg] \
 https://packages.microsoft.com/repos/code stable main" \
     > /etc/apt/sources.list.d/vscode.list
 
@@ -529,34 +560,115 @@ https://packages.microsoft.com/repos/code stable main" \
   apt-get install -y code
 
   if command -v code &>/dev/null; then
-    log "VSCode berhasil diinstall."
-    info "Versi: $(code --version | head -1)"
+    log "VSCode berhasil diinstall: $(code --version | head -1)"
   else
-    err "VSCode gagal diinstall."
+    err "VSCode gagal install via apt. Mencoba download .deb langsung..."
+    VSCODE_DEB="/tmp/vscode-latest.deb"
+    curl -fsSL "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64" \
+      -o "$VSCODE_DEB" 2>/dev/null || \
+    wget -q "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64" \
+      -O "$VSCODE_DEB" 2>/dev/null || true
+
+    if [[ -f "$VSCODE_DEB" && -s "$VSCODE_DEB" ]]; then
+      apt-get install -y "$VSCODE_DEB" 2>/dev/null || dpkg -i "$VSCODE_DEB" && apt-get install -f -y
+      rm -f "$VSCODE_DEB"
+      command -v code &>/dev/null && log "VSCode berhasil diinstall: $(code --version | head -1)" \
+        || err "VSCode tetap gagal diinstall."
+    else
+      err "Download VSCode gagal. Download manual: https://code.visualstudio.com"
+    fi
   fi
 }
 
 install_kiro() {
-  section "Install Kiro (AWS AI IDE)"
-  apt-get install -y wget curl
+  section "Install Kiro IDE (AWS AI IDE)"
+  apt-get install -y curl wget jq tar
 
-  KIRO_URL="https://desktop-release.kiro.dev/latest/linux/kiro-latest-amd64.deb"
-  KIRO_DEB="/tmp/kiro-latest.deb"
+  info "Mengambil metadata versi terbaru Kiro..."
+  METADATA_URL="https://prod.download.desktop.kiro.dev/stable/metadata-linux-x64-stable.json"
+  METADATA=$(curl -fsSL --max-time 15 "$METADATA_URL" 2>/dev/null)
 
-  info "Download dari: $KIRO_URL"
-  wget -q --show-progress -O "$KIRO_DEB" "$KIRO_URL"
+  if [[ -z "$METADATA" ]]; then
+    warn "Gagal ambil metadata. Menggunakan URL download langsung..."
+    # Fallback: download .deb dari URL statis
+    KIRO_DEB="/tmp/kiro-latest.deb"
+    KIRO_FALLBACK_URL="https://prod.download.desktop.kiro.dev/releases/stable/linux-x64/signed/latest/deb/kiro-ide-latest-stable-linux-x64.deb"
+    wget -q --show-progress -O "$KIRO_DEB" "$KIRO_FALLBACK_URL" 2>/dev/null || true
 
-  if [[ -f "$KIRO_DEB" ]]; then
-    apt-get install -y "$KIRO_DEB" 2>/dev/null || dpkg -i "$KIRO_DEB" && apt-get install -f -y
-    rm -f "$KIRO_DEB"
-    if command -v kiro &>/dev/null; then
-      log "Kiro berhasil diinstall."
-      info "Versi: $(kiro --version 2>/dev/null || echo 'Cek via aplikasi')"
+    if [[ -f "$KIRO_DEB" && -s "$KIRO_DEB" ]]; then
+      apt-get install -y "$KIRO_DEB" 2>/dev/null || { dpkg -i "$KIRO_DEB"; apt-get install -f -y; }
+      rm -f "$KIRO_DEB"
     else
-      warn "Kiro mungkin terinstall. Cari di: /usr/share/kiro atau /opt/Kiro"
+      err "Gagal download Kiro. Download manual: https://kiro.dev/downloads/"
+      return
     fi
   else
-    err "Gagal mendownload Kiro. Download manual: https://kiro.dev"
+    # Ambil URL .deb dari metadata
+    KIRO_DEB_URL=$(echo "$METADATA" | grep -oP '"url"\s*:\s*"\K[^"]+\.deb' | head -1)
+
+    if [[ -z "$KIRO_DEB_URL" ]]; then
+      # Ambil URL tar.gz lalu extract
+      KIRO_TAR_URL=$(echo "$METADATA" | grep -oP '"url"\s*:\s*"\K[^"]+\.tar\.gz' | head -1)
+      KIRO_VERSION=$(echo "$METADATA" | grep -oP '"currentRelease"\s*:\s*"\K[^"]+' | head -1)
+      info "Versi terbaru: $KIRO_VERSION"
+      info "Download via tar.gz: $KIRO_TAR_URL"
+
+      KIRO_TAR="/tmp/kiro-latest.tar.gz"
+      curl -fsSL -o "$KIRO_TAR" "$KIRO_TAR_URL"
+
+      rm -rf /opt/kiro
+      mkdir -p /opt/kiro /tmp/kiro-extract
+      tar -xzf "$KIRO_TAR" -C /tmp/kiro-extract
+      rm -f "$KIRO_TAR"
+
+      # Cari direktori hasil extract
+      INNER=$(find /tmp/kiro-extract -maxdepth 2 -name "kiro" -type f | head -1 | xargs dirname 2>/dev/null)
+      KIRO_SRC=$(find /tmp/kiro-extract -maxdepth 1 -mindepth 1 -type d | head -1)
+      [[ -d "$KIRO_SRC/Kiro" ]] && KIRO_SRC="$KIRO_SRC/Kiro"
+
+      cp -r "$KIRO_SRC"/. /opt/kiro/
+      rm -rf /tmp/kiro-extract
+
+      chmod +x /opt/kiro/kiro /opt/kiro/bin/kiro 2>/dev/null || true
+      chmod 4755 /opt/kiro/chrome-sandbox 2>/dev/null || true
+      ln -sf /opt/kiro/bin/kiro /usr/local/bin/kiro 2>/dev/null || \
+        ln -sf /opt/kiro/kiro /usr/local/bin/kiro 2>/dev/null || true
+
+      # Buat .desktop entry
+      mkdir -p /usr/share/applications
+      ICON_PATH="/opt/kiro/resources/app/resources/linux/kiro.png"
+      cat > /usr/share/applications/kiro.desktop << EOF
+[Desktop Entry]
+Name=Kiro
+Comment=Kiro - AI-powered development environment
+Exec=/opt/kiro/bin/kiro %F
+Icon=$ICON_PATH
+Terminal=false
+Type=Application
+Categories=Development;IDE;
+StartupWMClass=kiro
+EOF
+      chmod +x /usr/share/applications/kiro.desktop
+      update-desktop-database /usr/share/applications 2>/dev/null || true
+    else
+      info "Download via .deb: $KIRO_DEB_URL"
+      KIRO_VERSION=$(echo "$METADATA" | grep -oP '"currentRelease"\s*:\s*"\K[^"]+' | head -1)
+      info "Versi terbaru: $KIRO_VERSION"
+      KIRO_DEB="/tmp/kiro-latest.deb"
+      curl -fsSL -o "$KIRO_DEB" "$KIRO_DEB_URL"
+      apt-get install -y "$KIRO_DEB" 2>/dev/null || { dpkg -i "$KIRO_DEB"; apt-get install -f -y; }
+      rm -f "$KIRO_DEB"
+    fi
+  fi
+
+  # Verifikasi
+  if command -v kiro &>/dev/null || [[ -f /opt/kiro/bin/kiro ]] || [[ -f /usr/local/bin/kiro ]]; then
+    log "Kiro berhasil diinstall."
+    info "Jalankan via Application Menu atau perintah: kiro"
+    info "Login dengan AWS Builder ID / GitHub / Google di: https://app.kiro.dev"
+  else
+    err "Kiro gagal diinstall."
+    info "Download manual: https://kiro.dev/downloads/"
   fi
 }
 
@@ -991,8 +1103,16 @@ apps_show_status() {
       echo -e "  ${RED}✘${NC} $label — Belum diinstall"
     fi
   }
-  _chk "Chromium"      "chromium-browser"  "chromium-browser --version"
-  _chk "Chromium"      "chromium"          "chromium --version"
+
+  # Chromium — cek salah satu saja, prioritas chromium-browser
+  if command -v chromium-browser &>/dev/null; then
+    echo -e "  ${GREEN}✔${NC} Chromium — $(chromium-browser --version 2>/dev/null | head -1)"
+  elif command -v chromium &>/dev/null; then
+    echo -e "  ${GREEN}✔${NC} Chromium — $(chromium --version 2>/dev/null | head -1)"
+  else
+    echo -e "  ${RED}✘${NC} Chromium — Belum diinstall"
+  fi
+
   _chk "Firefox ESR"   "firefox-esr"       "firefox-esr --version"
   _chk "Node.js"       "node"              "node --version"
   _chk "NPM"           "npm"               "npm --version"
@@ -1001,7 +1121,23 @@ apps_show_status() {
   _chk "OpenCode"      "opencode"          "opencode --version"
   _chk "Git"           "git"               "git --version"
   _chk "GitHub CLI"    "gh"                "gh --version"
-  _chk "Cockpit Tools" "cockpit-tools"     "cockpit-tools --version"
+
+  # Cockpit Tools — cek binary, .desktop, atau /opt
+  if command -v cockpit-tools &>/dev/null; then
+    echo -e "  ${GREEN}✔${NC} Cockpit Tools — $(cockpit-tools --version 2>/dev/null | head -1 || echo 'Terinstall')"
+  elif ls /opt/Cockpit\ Tools*/cockpit-tools &>/dev/null 2>/dev/null || \
+       ls /opt/cockpit-tools/cockpit-tools &>/dev/null 2>/dev/null || \
+       find /opt -maxdepth 2 -iname "cockpit-tools" -type f 2>/dev/null | grep -q .; then
+    echo -e "  ${GREEN}✔${NC} Cockpit Tools — Terinstall (di /opt)"
+  elif find /usr/share/applications /home/*/.local/share/applications /root/.local/share/applications \
+       -iname "*cockpit*" 2>/dev/null | grep -q .; then
+    echo -e "  ${GREEN}✔${NC} Cockpit Tools — Terinstall (cek Application Menu)"
+  elif dpkg -l 2>/dev/null | grep -qi "cockpit-tools"; then
+    echo -e "  ${GREEN}✔${NC} Cockpit Tools — Terinstall (via dpkg)"
+  else
+    echo -e "  ${RED}✘${NC} Cockpit Tools — Belum diinstall"
+  fi
+
   echo -e "\n  ${BOLD}— APK Tools —${NC}"
   _chk "Java JDK 17"   "java"              "java -version"
   _chk "apktool"       "apktool"           "apktool --version"

@@ -373,9 +373,6 @@ setup_desktop_xrdp() {
   read -rp "Lanjutkan? (y/N): " CONFIRM
   [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && { info "Dibatalkan."; return; }
 
-  info "Refresh daftar paket (apt update)..."
-  apt-get update -y
-
   case "$SELECTED_DE" in
     xfce4) install_xfce ;;
     lxde)  install_lxde ;;
@@ -391,9 +388,6 @@ setup_all() {
   warn "Akan menginstall: $SELECTED_DE_NAME + XRDP + Tailscale"
   read -rp "Lanjutkan? (y/N): " CONFIRM
   [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && { info "Dibatalkan."; return; }
-
-  info "Refresh daftar paket (apt update)..."
-  apt-get update -y
 
   case "$SELECTED_DE" in
     xfce4) install_xfce ;;
@@ -562,13 +556,22 @@ uninstall_all_desktop_xrdp() {
 
 install_chromium() {
   section "Install Chromium Browser"
-  info "Menginstall Chromium..."
-  apt-get update -y
-  apt-get install -y chromium-browser 2>/dev/null || \
-  apt-get install -y chromium 2>/dev/null || \
-  snap install chromium
 
-  # Tentukan binary yang tersedia
+  # Cek apakah sudah ada
+  if command -v chromium-browser &>/dev/null || command -v chromium &>/dev/null; then
+    CHROMIUM_BIN=$(command -v chromium-browser 2>/dev/null || command -v chromium)
+    log "Chromium sudah terinstall: $($CHROMIUM_BIN --version 2>/dev/null)"
+    return
+  fi
+
+  info "Menginstall Chromium via apt..."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y chromium 2>/dev/null || \
+  DEBIAN_FRONTEND=noninteractive apt-get install -y chromium-browser 2>/dev/null || {
+    err "Chromium tidak tersedia via apt."
+    warn "Coba jalankan manual: apt update && apt install chromium"
+    return
+  }
+
   CHROMIUM_BIN=""
   command -v chromium-browser &>/dev/null && CHROMIUM_BIN="chromium-browser"
   command -v chromium &>/dev/null && CHROMIUM_BIN="chromium"
@@ -576,10 +579,9 @@ install_chromium() {
   if [[ -n "$CHROMIUM_BIN" ]]; then
     log "Chromium berhasil diinstall: $($CHROMIUM_BIN --version 2>/dev/null)"
 
-    # Pastikan .desktop entry ada di start menu
+    # Buat .desktop entry jika belum ada
     DESKTOP_FILE="/usr/share/applications/chromium-browser.desktop"
     if [[ ! -f "$DESKTOP_FILE" ]]; then
-      info "Membuat .desktop entry untuk start menu..."
       mkdir -p /usr/share/applications
       cat > "$DESKTOP_FILE" << EOF
 [Desktop Entry]
@@ -596,10 +598,7 @@ EOF
       chmod +x "$DESKTOP_FILE"
       log ".desktop entry dibuat."
     fi
-
-    # Refresh database aplikasi
     update-desktop-database /usr/share/applications 2>/dev/null || true
-    log "Start menu di-refresh."
   else
     err "Chromium gagal diinstall."
   fi
@@ -1044,7 +1043,6 @@ APK_WORKSPACE="/home/${REAL_USER:-ubuntu}/apk-workspace"
 install_apk_java() {
   section "Install OpenJDK 17"
   info "Menginstall openjdk-17-jdk-headless..."
-  apt-get update -y
   apt-get install -y openjdk-17-jdk-headless
 
   if java -version 2>&1 | grep -q "17"; then

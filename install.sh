@@ -48,6 +48,18 @@ section() {
   echo -e "${BOLD}${CYAN}══════════════════════════════════════${NC}"
 }
 
+# ── Strip \r dari input (fix Putty CRLF) ─────────────────────
+read_choice() {
+  local __prompt="$1"
+  local __var="$2"
+  local __default="${3:-}"
+  read -rp "$__prompt" __input
+  __input="${__input%$'\r'}"
+  __input="${__input// /}"
+  [[ -z "$__input" && -n "$__default" ]] && __input="$__default"
+  eval "$__var='$__input'"
+}
+
 # ── Check root ───────────────────────────────────────────────
 if [[ $EUID -ne 0 ]]; then
   echo -e "${RED}Jalankan sebagai root:${NC} sudo bash $0"
@@ -132,7 +144,7 @@ update_system() {
   echo -e "  ${GREEN}1)${NC} apt update saja          — Refresh daftar paket (cepat, wajib)"
   echo -e "  ${GREEN}2)${NC} apt update + upgrade      — Refresh + upgrade semua paket (lambat)"
   echo ""
-  read -rp "  Pilihan [1/2, default=1]: " UPD_CHOICE
+  read_choice "  Pilihan [1/2, default=1]: " UPD_CHOICE 1
   UPD_CHOICE="${UPD_CHOICE:-1}"
 
   info "Refresh daftar paket..."
@@ -210,7 +222,7 @@ choose_desktop() {
   echo ""
   echo -e "  ${CYAN}Desktop saat ini:${NC} $SELECTED_DE_NAME"
   echo ""
-  read -rp "  Pilih desktop [1-3]: " DE_CHOICE
+  read_choice "  Pilih desktop [1-3]: " DE_CHOICE
   case "$DE_CHOICE" in
     1)
       SELECTED_DE="xfce4"
@@ -441,7 +453,7 @@ uninstall_desktop() {
   echo -e "  ${YELLOW}4)${NC} Hapus Semua (XFCE4 + LXDE + LXQt)"
   echo -e "  ${RED}0)${NC} Batal"
   echo ""
-  read -rp "  Pilihan [0-4]: " DE_DEL
+  read_choice "  Pilihan [0-4]: " DE_DEL
 
   case "$DE_DEL" in
     0) info "Dibatalkan."; return ;;
@@ -1661,7 +1673,7 @@ menu_apps() {
     echo -e "  ${CYAN}B)${NC} Fix Start Menu (Refresh Desktop Entries)"
     echo -e "  ${RED}0)${NC} Kembali ke Menu Utama"
     echo ""
-    read -rp "  Masukkan pilihan [0-9/A-B]: " CHOICE
+    read_choice "  Masukkan pilihan [0-9/A-B]: " CHOICE
     case "$CHOICE" in
       1) install_chromium ;;
       2) install_firefox_esr ;;
@@ -1706,7 +1718,7 @@ menu_fix() {
     echo -e "  ${YELLOW}9)${NC} Fix All (Jalankan Semua Perbaikan)"
     echo -e "  ${RED}0)${NC} Kembali ke Menu Utama"
     echo ""
-    read -rp "  Masukkan pilihan [0-9]: " CHOICE
+    read_choice "  Masukkan pilihan [0-9]: " CHOICE
     case "$CHOICE" in
       1) fix_restart_xrdp ;;
       2) fix_black_screen ;;
@@ -1747,7 +1759,7 @@ menu_apk() {
     echo -e "  ${CYAN}7)${NC} Status & Quick Reference"
     echo -e "  ${RED}0)${NC} Kembali ke Menu Utama"
     echo ""
-    read -rp "  Masukkan pilihan [0-7]: " CHOICE
+    read_choice "  Masukkan pilihan [0-7]: " CHOICE
     case "$CHOICE" in
       1) install_apk_java ;;
       2) install_apktool ;;
@@ -1783,7 +1795,7 @@ while true; do
   echo -e "  ${GREEN}4)${NC} 📱  APK Tools — apktool, jadx, dex2jar, apksigner"
   echo -e "  ${RED}0)${NC} ❌  Keluar"
   echo ""
-  read -rp "  Masukkan pilihan [0-4]: " MAIN_CHOICE
+  read_choice "  Masukkan pilihan [0-4]: " MAIN_CHOICE
   case "$MAIN_CHOICE" in
     1) menu_setup ;;
     2) menu_apps ;;

@@ -727,30 +727,40 @@ https://packages.microsoft.com/repos/code stable main" \
 
 install_kiro() {
   section "Install Kiro IDE (AWS AI IDE)"
-  apt-get install -y curl wget
+  apt-get install -y curl wget jq
 
-  # Ambil versi terbaru dari GitHub releases kirodotdev/Kiro
+  # Ambil versi terbaru dari metadata API resmi
   info "Mengambil versi terbaru Kiro..."
   KIRO_VERSION=$(curl -fsSL --max-time 10 \
-    "https://api.github.com/repos/kirodotdev/Kiro/releases/latest" \
-    | grep -oP '"tag_name":\s*"\K[^"]+' | head -1 2>/dev/null)
+    "https://prod.download.desktop.kiro.dev/stable/metadata-linux-x64-stable.json" \
+    | grep -oP '"currentRelease"\s*:\s*"\K[^"]+' | head -1 2>/dev/null)
 
+  # Fallback: coba dari GitHub releases
   if [[ -z "$KIRO_VERSION" ]]; then
-    warn "Gagal ambil versi terbaru, coba URL download langsung..."
-    KIRO_DEB_URL="https://prod.download.desktop.kiro.dev/releases/stable/linux-x64/signed/latest/deb/kiro-ide-latest-stable-linux-x64.deb"
-  else
-    info "Versi terbaru: $KIRO_VERSION"
-    KIRO_DEB_URL="https://prod.download.desktop.kiro.dev/releases/stable/linux-x64/signed/${KIRO_VERSION}/deb/kiro-ide-${KIRO_VERSION}-stable-linux-x64.deb"
+    KIRO_VERSION=$(curl -fsSL --max-time 10 \
+      "https://api.github.com/repos/kirodotdev/Kiro/releases/latest" \
+      | grep -oP '"tag_name"\s*:\s*"\K[^"]+' | head -1 2>/dev/null)
   fi
 
-  KIRO_DEB="/tmp/kiro-latest.deb"
-  info "Download .deb dari: $KIRO_DEB_URL"
-  wget -q --show-progress -O "$KIRO_DEB" "$KIRO_DEB_URL" 2>/dev/null || \
-  curl -fsSL -o "$KIRO_DEB" "$KIRO_DEB_URL"
+  if [[ -z "$KIRO_VERSION" ]]; then
+    err "Gagal mengambil versi Kiro. Cek koneksi internet."
+    info "Download manual: https://kiro.dev/downloads/"
+    return
+  fi
+
+  info "Versi terbaru: $KIRO_VERSION"
+
+  # Build URL .deb langsung dari versi
+  KIRO_DEB_URL="https://prod.download.desktop.kiro.dev/releases/stable/linux-x64/signed/${KIRO_VERSION}/deb/kiro-ide-${KIRO_VERSION}-stable-linux-x64.deb"
+  KIRO_DEB="/tmp/kiro-${KIRO_VERSION}.deb"
+
+  info "Download .deb: $KIRO_DEB_URL"
+  wget -q --show-progress -O "$KIRO_DEB" "$KIRO_DEB_URL"
 
   if [[ ! -f "$KIRO_DEB" || ! -s "$KIRO_DEB" ]]; then
     err "Gagal download Kiro .deb."
     info "Download manual: https://kiro.dev/downloads/"
+    rm -f "$KIRO_DEB"
     return
   fi
 
@@ -761,12 +771,13 @@ install_kiro() {
   }
   rm -f "$KIRO_DEB"
 
-  if command -v kiro &>/dev/null || [[ -f /usr/share/kiro/kiro ]] || [[ -f /opt/kiro/bin/kiro ]]; then
-    log "Kiro berhasil diinstall."
+  if command -v kiro &>/dev/null || \
+     find /usr/share /opt -maxdepth 3 -name "kiro" -type f 2>/dev/null | grep -q .; then
+    log "Kiro $KIRO_VERSION berhasil diinstall."
     info "Buka via Application Menu atau ketik: kiro"
   else
-    warn "Kiro mungkin sudah terinstall tapi binary tidak ada di PATH."
-    info "Cari di Application Menu atau: find /opt /usr/share -name 'kiro' -type f 2>/dev/null"
+    warn "Kiro mungkin terinstall tapi binary tidak ada di PATH."
+    info "Cari di: find /opt /usr/share -name 'kiro' -type f 2>/dev/null"
   fi
 }
 

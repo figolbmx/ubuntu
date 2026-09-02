@@ -557,81 +557,120 @@ uninstall_all_desktop_xrdp() {
 install_chromium() {
   section "Install Chromium Browser (DEB via XtraDeb PPA)"
 
-  # Cek apakah sudah ada
-  if command -v chromium-browser &>/dev/null || command -v chromium &>/dev/null; then
-    CHROMIUM_BIN=$(command -v chromium-browser 2>/dev/null || command -v chromium)
-    log "Chromium sudah terinstall: $($CHROMIUM_BIN --version 2>/dev/null)"
-    return
+  # Cek apakah sudah ada (dan bukan snap)
+  if command -v chromium &>/dev/null; then
+    if ! (chromium --version 2>/dev/null | grep -qi snap); then
+      log "Chromium sudah terinstall: $(chromium --version 2>/dev/null)"
+      return
+    fi
+    info "Chromium snap terdeteksi, akan diganti dengan DEB..."
   fi
 
-  apt-get install -y curl gpg
+  apt-get install -y curl gpg ca-certificates gnupg xdg-utils
 
-  info "Menambahkan XtraDeb PPA secara manual (tanpa add-apt-repository)..."
-
-  # Tambah GPG key XtraDeb
-  curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x6A97AAD7F8B9574BB84B2C1038FE5F11C01360B6" \
-    | gpg --dearmor -o /etc/apt/keyrings/xtradeb.gpg 2>/dev/null || \
-  curl -fsSL "https://raw.githubusercontent.com/xtradeb/apps/main/xtradeb-keyring.gpg" \
-    -o /etc/apt/keyrings/xtradeb.gpg 2>/dev/null || true
+  # Hapus chromium-browser Ubuntu (wrapper snap) dan snap chromium jika ada
+  info "Membersihkan Chromium snap/wrapper jika ada..."
+  apt-get purge -y chromium-browser chromium-browser-l10n 2>/dev/null || true
+  command -v snap &>/dev/null && snap remove chromium 2>/dev/null || true
 
   UBUNTU_CODENAME_CHROMIUM="${UBUNTU_CODENAME:-$(lsb_release -cs 2>/dev/null)}"
 
-  # Tambah repo
+  # Tambah GPG key XtraDeb dari keyserver
+  info "Menambahkan GPG key XtraDeb..."
+  gpg --no-default-keyring \
+    --keyring /etc/apt/keyrings/xtradeb.gpg \
+    --keyserver hkp://keyserver.ubuntu.com:80 \
+    --recv-keys 6A97AAD7F8B9574BB84B2C1038FE5F11C01360B6 2>/dev/null || \
+  curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x6A97AAD7F8B9574BB84B2C1038FE5F11C01360B6" \
+    | gpg --dearmor -o /etc/apt/keyrings/xtradeb.gpg 2>/dev/null || true
+
+  # Tulis repo XtraDeb
+  info "Menambahkan XtraDeb repo..."
   if [[ -f /etc/apt/keyrings/xtradeb.gpg ]]; then
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/xtradeb.gpg] \
 https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu ${UBUNTU_CODENAME_CHROMIUM} main" \
       > /etc/apt/sources.list.d/xtradeb-apps.list
   else
-    # Fallback tanpa key verification
     echo "deb https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu ${UBUNTU_CODENAME_CHROMIUM} main" \
       > /etc/apt/sources.list.d/xtradeb-apps.list
   fi
 
+  # Pin preference — blokir snap wrapper, prioritaskan XtraDeb untuk chromium
+  info "Set pin preference untuk blokir snap chromium..."
+  cat > /etc/apt/preferences.d/xtradeb-chromium.pref << 'EOF'
+# Blokir chromium-browser Ubuntu (wrapper snap)
+Package: chromium-browser
+Pin: version 2:1snap*
+Pin-Priority: -1
+
+# Prioritaskan chromium dari XtraDeb
+Package: chromium*
+Pin: release o=LP-PPA-xtradeb-apps
+Pin-Priority: 700
+
+# Jangan ambil paket lain dari XtraDeb
+Package: *
+Pin: release o=LP-PPA-xtradeb-apps
+Pin-Priority: -1
+EOF
+
   info "Refresh package list..."
   apt-get update -y
 
-  info "Menginstall Chromium dari XtraDeb PPA..."
+  info "Install Chromium native DEB dari XtraDeb..."
   DEBIAN_FRONTEND=noninteractive apt-get install -y chromium
 
-  CHROMIUM_BIN=""
-  command -v chromium &>/dev/null && CHROMIUM_BIN="chromium"
-  command -v chromium-browser &>/dev/null && CHROMIUM_BIN="chromium-browser"
+  if command -v chromium &>/dev/null; then
+    log "Chromium berhasil diinstall: $(chromium --version 2>/dev/null)"
 
-  if [[ -n "$CHROMIUM_BIN" ]]; then
-    log "Chromium berhasil diinstall: $($CHROMIUM_BIN --version 2>/dev/null)"
-
-    DESKTOP_FILE="/usr/share/applications/chromium-browser.desktop"
-    if [[ ! -f "$DESKTOP_FILE" ]]; then
-      mkdir -p /usr/share/applications
-      cat > "$DESKTOP_FILE" << EOF
+    # Buat .desktop entry
+    cat > /usr/share/applications/chromium.desktop << 'EOF'
 [Desktop Entry]
-Name=Chromium Web Browser
-Comment=Access the Internet
-Exec=$CHROMIUM_BIN %U
-Icon=chromium-browser
+Version=1.0
+Name=Chromium
+GenericName=Web Browser
+Comment=Browse the Web
+Exec=/usr/bin/chromium %U
 Terminal=false
 Type=Application
+Icon=chromium
 Categories=Network;WebBrowser;
-MimeType=text/html;text/xml;application/xhtml_xml;x-scheme-handler/http;x-scheme-handler/https;
 StartupNotify=true
+StartupWMClass=Chromium
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
 EOF
-      chmod +x "$DESKTOP_FILE"
-      log ".desktop entry dibuat."
-    fi
+    chmod 644 /usr/share/applications/chromium.desktop
     update-desktop-database /usr/share/applications 2>/dev/null || true
     log "Chromium siap digunakan (native .deb, bukan snap)."
+    warn "Jangan jalankan Chromium sebagai root — login via user biasa di RDP."
   else
-    err "Chromium gagal diinstall dari XtraDeb."
-    info "Coba manual: add-apt-repository ppa:xtradeb/apps && apt install chromium"
+    err "Chromium gagal diinstall."
+    info "Coba manual: apt install chromium (pastikan XtraDeb PPA sudah ditambahkan)"
   fi
 }
 
 install_firefox_esr() {
   section "Install Firefox ESR"
-  info "Menambahkan repository Mozilla PPA..."
-  apt-get install -y software-properties-common
-  add-apt-repository -y ppa:mozillateam/ppa
+  info "Menambahkan Mozilla PPA secara manual (tanpa add-apt-repository)..."
+  apt-get install -y curl gpg
 
+  UBUNTU_CODENAME_FF="${UBUNTU_CODENAME:-$(lsb_release -cs 2>/dev/null)}"
+
+  # Tambah GPG key Mozilla PPA
+  curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x0AB215679C571D1C8325275B9BDB3D89CE49EC21" \
+    | gpg --dearmor -o /etc/apt/keyrings/mozillateam.gpg 2>/dev/null || true
+
+  # Tambah repo
+  if [[ -f /etc/apt/keyrings/mozillateam.gpg ]]; then
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/mozillateam.gpg] \
+https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu ${UBUNTU_CODENAME_FF} main" \
+      > /etc/apt/sources.list.d/mozillateam.list
+  else
+    echo "deb https://ppa.launchpadcontent.net/mozillateam/ppa/ubuntu ${UBUNTU_CODENAME_FF} main" \
+      > /etc/apt/sources.list.d/mozillateam.list
+  fi
+
+  # Pin prioritas agar tidak tertimpa snap
   cat > /etc/apt/preferences.d/mozilla-firefox << 'EOF'
 Package: *
 Pin: release o=LP-PPA-mozillateam

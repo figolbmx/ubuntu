@@ -555,7 +555,7 @@ uninstall_all_desktop_xrdp() {
 # ════════════════════════════════════════════════════════════
 
 install_chromium() {
-  section "Install Chromium Browser"
+  section "Install Chromium Browser (DEB via XtraDeb PPA)"
 
   # Cek apakah sudah ada
   if command -v chromium-browser &>/dev/null || command -v chromium &>/dev/null; then
@@ -564,17 +564,20 @@ install_chromium() {
     return
   fi
 
-  info "Menginstall Chromium via apt..."
-  DEBIAN_FRONTEND=noninteractive apt-get install -y chromium 2>/dev/null || \
-  DEBIAN_FRONTEND=noninteractive apt-get install -y chromium-browser 2>/dev/null || {
-    err "Chromium tidak tersedia via apt."
-    warn "Coba jalankan manual: apt update && apt install chromium"
-    return
-  }
+  apt-get install -y software-properties-common
+
+  info "Menambahkan XtraDeb PPA (Chromium native .deb, bukan snap)..."
+  add-apt-repository -y ppa:xtradeb/apps
+
+  info "Refresh package list setelah tambah PPA..."
+  apt-get update -y
+
+  info "Menginstall Chromium dari XtraDeb PPA..."
+  DEBIAN_FRONTEND=noninteractive apt-get install -y chromium
 
   CHROMIUM_BIN=""
-  command -v chromium-browser &>/dev/null && CHROMIUM_BIN="chromium-browser"
   command -v chromium &>/dev/null && CHROMIUM_BIN="chromium"
+  command -v chromium-browser &>/dev/null && CHROMIUM_BIN="chromium-browser"
 
   if [[ -n "$CHROMIUM_BIN" ]]; then
     log "Chromium berhasil diinstall: $($CHROMIUM_BIN --version 2>/dev/null)"
@@ -599,6 +602,7 @@ EOF
       log ".desktop entry dibuat."
     fi
     update-desktop-database /usr/share/applications 2>/dev/null || true
+    log "Chromium siap digunakan (native .deb, bukan snap)."
   else
     err "Chromium gagal diinstall."
   fi

@@ -564,12 +564,30 @@ install_chromium() {
     return
   fi
 
-  apt-get install -y software-properties-common
+  apt-get install -y curl gpg
 
-  info "Menambahkan XtraDeb PPA (Chromium native .deb, bukan snap)..."
-  add-apt-repository -y ppa:xtradeb/apps
+  info "Menambahkan XtraDeb PPA secara manual (tanpa add-apt-repository)..."
 
-  info "Refresh package list setelah tambah PPA..."
+  # Tambah GPG key XtraDeb
+  curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x6A97AAD7F8B9574BB84B2C1038FE5F11C01360B6" \
+    | gpg --dearmor -o /etc/apt/keyrings/xtradeb.gpg 2>/dev/null || \
+  curl -fsSL "https://raw.githubusercontent.com/xtradeb/apps/main/xtradeb-keyring.gpg" \
+    -o /etc/apt/keyrings/xtradeb.gpg 2>/dev/null || true
+
+  UBUNTU_CODENAME_CHROMIUM="${UBUNTU_CODENAME:-$(lsb_release -cs 2>/dev/null)}"
+
+  # Tambah repo
+  if [[ -f /etc/apt/keyrings/xtradeb.gpg ]]; then
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/xtradeb.gpg] \
+https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu ${UBUNTU_CODENAME_CHROMIUM} main" \
+      > /etc/apt/sources.list.d/xtradeb-apps.list
+  else
+    # Fallback tanpa key verification
+    echo "deb https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu ${UBUNTU_CODENAME_CHROMIUM} main" \
+      > /etc/apt/sources.list.d/xtradeb-apps.list
+  fi
+
+  info "Refresh package list..."
   apt-get update -y
 
   info "Menginstall Chromium dari XtraDeb PPA..."
@@ -582,7 +600,6 @@ install_chromium() {
   if [[ -n "$CHROMIUM_BIN" ]]; then
     log "Chromium berhasil diinstall: $($CHROMIUM_BIN --version 2>/dev/null)"
 
-    # Buat .desktop entry jika belum ada
     DESKTOP_FILE="/usr/share/applications/chromium-browser.desktop"
     if [[ ! -f "$DESKTOP_FILE" ]]; then
       mkdir -p /usr/share/applications
@@ -604,7 +621,8 @@ EOF
     update-desktop-database /usr/share/applications 2>/dev/null || true
     log "Chromium siap digunakan (native .deb, bukan snap)."
   else
-    err "Chromium gagal diinstall."
+    err "Chromium gagal diinstall dari XtraDeb."
+    info "Coba manual: add-apt-repository ppa:xtradeb/apps && apt install chromium"
   fi
 }
 

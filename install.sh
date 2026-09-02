@@ -568,15 +568,29 @@ install_chromium() {
 
   apt-get install -y curl gpg ca-certificates gnupg xdg-utils
 
+  # ── Blokir snapd agar apt tidak bisa install snap chromium ──
+  info "Memblokir snapd sementara agar chromium tidak install via snap..."
+  if [[ ! -f /etc/apt/preferences.d/no-snap.pref ]]; then
+    cat > /etc/apt/preferences.d/no-snap.pref << 'EOF'
+Package: snapd
+Pin: release a=*
+Pin-Priority: -10
+EOF
+    log "snapd diblokir via apt preferences."
+  fi
+
   # Hapus chromium-browser Ubuntu (wrapper snap) dan snap chromium jika ada
   info "Membersihkan Chromium snap/wrapper jika ada..."
   apt-get purge -y chromium-browser chromium-browser-l10n 2>/dev/null || true
-  command -v snap &>/dev/null && snap remove chromium 2>/dev/null || true
+  if command -v snap &>/dev/null; then
+    snap remove chromium 2>/dev/null || true
+  fi
 
   UBUNTU_CODENAME_CHROMIUM="${UBUNTU_CODENAME:-$(lsb_release -cs 2>/dev/null)}"
 
   # Tambah GPG key XtraDeb dari keyserver
   info "Menambahkan GPG key XtraDeb..."
+  mkdir -p /etc/apt/keyrings
   gpg --no-default-keyring \
     --keyring /etc/apt/keyrings/xtradeb.gpg \
     --keyserver hkp://keyserver.ubuntu.com:80 \
@@ -596,7 +610,6 @@ https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu ${UBUNTU_CODENAME_CHROMIUM}
   fi
 
   # Pin preference — blokir snap wrapper, prioritaskan XtraDeb untuk chromium
-  info "Set pin preference untuk blokir snap chromium..."
   cat > /etc/apt/preferences.d/xtradeb-chromium.pref << 'EOF'
 # Blokir chromium-browser Ubuntu (wrapper snap)
 Package: chromium-browser

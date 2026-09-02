@@ -555,110 +555,43 @@ uninstall_all_desktop_xrdp() {
 # ════════════════════════════════════════════════════════════
 
 install_chromium() {
-  section "Install Chromium Browser (DEB via XtraDeb PPA)"
+  section "Install Google Chrome"
 
-  # Cek apakah sudah ada (dan bukan snap)
-  if command -v chromium &>/dev/null; then
-    if ! (chromium --version 2>/dev/null | grep -qi snap); then
-      log "Chromium sudah terinstall: $(chromium --version 2>/dev/null)"
-      return
-    fi
-    info "Chromium snap terdeteksi, akan diganti dengan DEB..."
+  # Cek apakah sudah ada
+  if command -v google-chrome &>/dev/null || command -v google-chrome-stable &>/dev/null; then
+    log "Google Chrome sudah terinstall: $(google-chrome --version 2>/dev/null || google-chrome-stable --version 2>/dev/null)"
+    return
   fi
 
-  apt-get install -y curl gpg ca-certificates gnupg xdg-utils
+  apt-get install -y wget curl
 
-  # ── Blokir snapd agar apt tidak bisa install snap chromium ──
-  info "Memblokir snapd sementara agar chromium tidak install via snap..."
-  if [[ ! -f /etc/apt/preferences.d/no-snap.pref ]]; then
-    cat > /etc/apt/preferences.d/no-snap.pref << 'EOF'
-Package: snapd
-Pin: release a=*
-Pin-Priority: -10
-EOF
-    log "snapd diblokir via apt preferences."
+  info "Download Google Chrome .deb dari server resmi Google..."
+  CHROME_DEB="/tmp/google-chrome.deb"
+  wget -q --show-progress \
+    "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" \
+    -O "$CHROME_DEB" || \
+  curl -fsSL \
+    "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb" \
+    -o "$CHROME_DEB"
+
+  if [[ ! -f "$CHROME_DEB" || ! -s "$CHROME_DEB" ]]; then
+    err "Gagal download Google Chrome."
+    return
   fi
 
-  # Hapus chromium-browser Ubuntu (wrapper snap) dan snap chromium jika ada
-  info "Membersihkan Chromium snap/wrapper jika ada..."
-  apt-get purge -y chromium-browser chromium-browser-l10n 2>/dev/null || true
-  if command -v snap &>/dev/null; then
-    snap remove chromium 2>/dev/null || true
-  fi
+  info "Menginstall Google Chrome dari .deb..."
+  apt-get install -y "$CHROME_DEB" 2>/dev/null || {
+    dpkg -i "$CHROME_DEB"
+    apt-get install -f -y
+  }
+  rm -f "$CHROME_DEB"
 
-  UBUNTU_CODENAME_CHROMIUM="${UBUNTU_CODENAME:-$(lsb_release -cs 2>/dev/null)}"
-
-  # Tambah GPG key XtraDeb dari keyserver
-  info "Menambahkan GPG key XtraDeb..."
-  mkdir -p /etc/apt/keyrings
-  gpg --no-default-keyring \
-    --keyring /etc/apt/keyrings/xtradeb.gpg \
-    --keyserver hkp://keyserver.ubuntu.com:80 \
-    --recv-keys 6A97AAD7F8B9574BB84B2C1038FE5F11C01360B6 2>/dev/null || \
-  curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x6A97AAD7F8B9574BB84B2C1038FE5F11C01360B6" \
-    | gpg --dearmor -o /etc/apt/keyrings/xtradeb.gpg 2>/dev/null || true
-
-  # Tulis repo XtraDeb
-  info "Menambahkan XtraDeb repo..."
-  if [[ -f /etc/apt/keyrings/xtradeb.gpg ]]; then
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/xtradeb.gpg] \
-https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu ${UBUNTU_CODENAME_CHROMIUM} main" \
-      > /etc/apt/sources.list.d/xtradeb-apps.list
-  else
-    echo "deb https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu ${UBUNTU_CODENAME_CHROMIUM} main" \
-      > /etc/apt/sources.list.d/xtradeb-apps.list
-  fi
-
-  # Pin preference — blokir snap wrapper, prioritaskan XtraDeb untuk chromium
-  cat > /etc/apt/preferences.d/xtradeb-chromium.pref << 'EOF'
-# Blokir chromium-browser Ubuntu (wrapper snap)
-Package: chromium-browser
-Pin: version 2:1snap*
-Pin-Priority: -1
-
-# Prioritaskan chromium dari XtraDeb
-Package: chromium*
-Pin: release o=LP-PPA-xtradeb-apps
-Pin-Priority: 700
-
-# Jangan ambil paket lain dari XtraDeb
-Package: *
-Pin: release o=LP-PPA-xtradeb-apps
-Pin-Priority: -1
-EOF
-
-  info "Refresh package list..."
-  apt-get update -y
-
-  info "Install Chromium native DEB dari XtraDeb..."
-  DEBIAN_FRONTEND=noninteractive apt-get install -y chromium
-
-  if command -v chromium &>/dev/null; then
-    log "Chromium berhasil diinstall: $(chromium --version 2>/dev/null)"
-
-    # Buat .desktop entry
-    cat > /usr/share/applications/chromium.desktop << 'EOF'
-[Desktop Entry]
-Version=1.0
-Name=Chromium
-GenericName=Web Browser
-Comment=Browse the Web
-Exec=/usr/bin/chromium %U
-Terminal=false
-Type=Application
-Icon=chromium
-Categories=Network;WebBrowser;
-StartupNotify=true
-StartupWMClass=Chromium
-MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
-EOF
-    chmod 644 /usr/share/applications/chromium.desktop
+  if command -v google-chrome-stable &>/dev/null || command -v google-chrome &>/dev/null; then
+    log "Google Chrome berhasil diinstall: $(google-chrome-stable --version 2>/dev/null || google-chrome --version 2>/dev/null)"
     update-desktop-database /usr/share/applications 2>/dev/null || true
-    log "Chromium siap digunakan (native .deb, bukan snap)."
-    warn "Jangan jalankan Chromium sebagai root — login via user biasa di RDP."
+    warn "Jangan jalankan Chrome sebagai root — login via user biasa di RDP."
   else
-    err "Chromium gagal diinstall."
-    info "Coba manual: apt install chromium (pastikan XtraDeb PPA sudah ditambahkan)"
+    err "Google Chrome gagal diinstall."
   fi
 }
 
@@ -1373,13 +1306,11 @@ apps_show_status() {
     fi
   }
 
-  # Chromium — cek salah satu saja, prioritas chromium-browser
-  if command -v chromium-browser &>/dev/null; then
-    echo -e "  ${GREEN}✔${NC} Chromium — $(chromium-browser --version 2>/dev/null | head -1)"
-  elif command -v chromium &>/dev/null; then
-    echo -e "  ${GREEN}✔${NC} Chromium — $(chromium --version 2>/dev/null | head -1)"
+  # Google Chrome — cek binary
+  if command -v google-chrome-stable &>/dev/null || command -v google-chrome &>/dev/null; then
+    echo -e "  ${GREEN}✔${NC} Google Chrome — $(google-chrome-stable --version 2>/dev/null || google-chrome --version 2>/dev/null)"
   else
-    echo -e "  ${RED}✘${NC} Chromium — Belum diinstall"
+    echo -e "  ${RED}✘${NC} Google Chrome — Belum diinstall"
   fi
 
   _chk "Firefox ESR"   "firefox-esr"       "firefox-esr --version"
@@ -1685,7 +1616,7 @@ menu_apps() {
     echo "  ╚══════════════════════════════════════════╝"
     echo -e "${NC}"
     echo -e "  ${BOLD}Pilih aplikasi yang ingin diinstall:${NC}\n"
-    echo -e "  ${GREEN}1)${NC} Chromium Browser"
+    echo -e "  ${GREEN}1)${NC} Google Chrome"
     echo -e "  ${GREEN}2)${NC} Firefox ESR"
     echo -e "  ${GREEN}3)${NC} Node.js LTS Terbaru + NPM"
     echo -e "  ${GREEN}4)${NC} Visual Studio Code (VSCode)"
